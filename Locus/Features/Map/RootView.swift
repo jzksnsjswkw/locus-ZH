@@ -224,7 +224,7 @@ struct BottomControlsView: View {
                     Button {
                         session.stop(pairing: pairing)
                     } label: {
-                        Text("Stop")
+                        Text(session.isMoving ? "Stop Move" : "Stop")
                             .font(.subheadline.weight(.bold))
                             .foregroundStyle(.white)
                             .frame(minWidth: 72)

@@ -78,6 +78,7 @@ final class SpoofSession: ObservableObject {
     @Published var lastError: String?
     @Published var isBusy = false
     @Published var joystickActive = false
+    @Published private(set) var routeActive = false
     @Published var speedMultiplier: Double = 1.0 {
         didSet { UserDefaults.standard.set(speedMultiplier, forKey: "locus.speedMultiplier") }
     }
@@ -122,10 +123,15 @@ final class SpoofSession: ObservableObject {
         apply(coordinate, pairing: pairing, markRecent: true)
     }
 
+    var isMoving: Bool { routeActive || joystickActive }
+
+    /// First press while moving freezes at the current simulated coordinate.
+    /// A later press clears the developer-location override and returns to GPS.
     func stop(pairing: PairingStore) {
-        routeTask?.cancel()
-        routeTask = nil
-        stopJoystick()
+        if isMoving {
+            stopMovement()
+            return
+        }
         stopResend()
         stopHealth()
         isBusy = true
@@ -166,6 +172,9 @@ final class SpoofSession: ObservableObject {
             lastError = "Import an RPPairing file in Settings first."
             return
         }
+        routeTask?.cancel()
+        routeTask = nil
+        routeActive = false
         let start = simulated ?? pin ?? locationKeeper.lastKnownCoordinate
         guard let start else {
             lastError = "Drop a pin or teleport somewhere before using the joystick."
@@ -187,6 +196,13 @@ final class SpoofSession: ObservableObject {
         joystickVector = vector
     }
 
+    func stopMovement() {
+        routeTask?.cancel()
+        routeTask = nil
+        routeActive = false
+        stopJoystick()
+    }
+
     func stopJoystick() {
         joystickActive = false
         joystickVector = .zero
@@ -198,6 +214,7 @@ final class SpoofSession: ObservableObject {
         guard pairing.hasPairingFile, coordinates.count >= 2 else { return }
         routeTask?.cancel()
         stopJoystick()
+        routeActive = true
         let mode = travelMode
         routeTask = Task { [weak self] in
             guard let self else { return }
@@ -232,6 +249,7 @@ final class SpoofSession: ObservableObject {
                 }
             } while self.routeLoopEnabled && !Task.isCancelled
             self.routeTask = nil
+            self.routeActive = false
         }
     }
 

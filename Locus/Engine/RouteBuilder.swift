@@ -8,18 +8,36 @@ enum RouteBuilder {
         to end: CLLocationCoordinate2D,
         mode: TravelMode
     ) async throws -> [CLLocationCoordinate2D] {
-        let request = MKDirections.Request()
-        request.source = MKMapItem(placemark: MKPlacemark(coordinate: start))
-        request.destination = MKMapItem(placemark: MKPlacemark(coordinate: end))
-        request.transportType = mode.mkTransportType
-        request.requestsAlternateRoutes = false
+        let candidates: [(CLLocationCoordinate2D, CLLocationCoordinate2D)] = [
+            (start, end),
+            (
+                ChinaCoordinateTransform.mapCoordinateToSystemCoordinate(start),
+                ChinaCoordinateTransform.mapCoordinateToSystemCoordinate(end)
+            )
+        ]
 
-        let directions = MKDirections(request: request)
-        let response = try await directions.calculate()
-        guard let route = response.routes.first else {
-            throw NSError(domain: "Locus", code: 1, userInfo: [NSLocalizedDescriptionKey: "No route found"])
+        for (candidateStart, candidateEnd) in candidates {
+            let request = MKDirections.Request()
+            request.source = MKMapItem(placemark: MKPlacemark(coordinate: candidateStart))
+            request.destination = MKMapItem(placemark: MKPlacemark(coordinate: candidateEnd))
+            request.transportType = mode.mkTransportType
+            request.requestsAlternateRoutes = false
+
+            if let response = try? await MKDirections(request: request).calculate(),
+               let route = response.routes.first {
+                let coordinates = sample(polyline: route.polyline, every: 12)
+                // Keep all UI/route playback coordinates in the map coordinate system.
+                if ChinaCoordinateTransform.usesMainlandChinaOffset(start),
+                   candidateStart.latitude != start.latitude {
+                    return coordinates.map(ChinaCoordinateTransform.systemCoordinateToMapCoordinate)
+                }
+                return coordinates
+            }
         }
-        return sample(polyline: route.polyline, every: 12)
+
+        // Apple Directions can be unavailable on some networks. Keep Build Walk
+        // usable with a deterministic direct route instead of failing the action.
+        return sample(coordinates: [start, end], every: 10)
     }
 
     static func sample(polyline: MKPolyline, every meters: CLLocationDistance) -> [CLLocationCoordinate2D] {

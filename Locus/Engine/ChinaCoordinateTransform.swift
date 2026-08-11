@@ -7,6 +7,12 @@ enum ChinaCoordinateTransform {
     private static let semiMajorAxis = 6_378_245.0
     private static let eccentricitySquared = 0.00669342162296594323
 
+    /// Converts a Core Location WGS-84 fix into the coordinate used by
+    /// Apple map tiles in mainland China.
+    static func systemCoordinateToMapCoordinate(_ coordinate: CLLocationCoordinate2D) -> CLLocationCoordinate2D {
+        wgs84ToGCJ02(coordinate)
+    }
+
     static func mapCoordinateToSystemCoordinate(_ coordinate: CLLocationCoordinate2D) -> CLLocationCoordinate2D {
         guard usesMainlandChinaOffset(coordinate) else { return coordinate }
 

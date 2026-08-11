@@ -42,6 +42,20 @@ struct RoutePlannerSheet: View {
                     .disabled(isRouting)
                 }
 
+                Section("Playback") {
+                    HStack {
+                        Label("Speed", systemImage: "speedometer")
+                        Spacer()
+                        Text(String(format: "%.2fx · %.1f km/h", session.speedMultiplier, session.travelMode.baseSpeed * session.speedMultiplier * 3.6))
+                            .font(.caption.monospacedDigit())
+                            .foregroundStyle(.secondary)
+                    }
+                    Slider(value: $session.speedMultiplier, in: 0.25...4.0, step: 0.25)
+                    Toggle(isOn: $session.routeLoopEnabled) {
+                        Label("Loop route", systemImage: "repeat")
+                    }
+                }
+
                 Section("Play / draw / GPX") {
                     Button {
                         onUseDrawn()
@@ -60,7 +74,7 @@ struct RoutePlannerSheet: View {
                 }
 
                 Section {
-                    Text("Routes follow Apple Maps roads/footpaths for the selected travel mode. Speed gets light random variation so motion looks less robotic.")
+                    Text("Road routing uses Apple Maps when available and falls back to a direct route when the route server is unreachable. Speed applies to route playback and the joystick.")
                         .font(.footnote)
                         .foregroundStyle(.secondary)
                 }

@@ -78,6 +78,12 @@ final class SpoofSession: ObservableObject {
     @Published var lastError: String?
     @Published var isBusy = false
     @Published var joystickActive = false
+    @Published var speedMultiplier: Double = 1.0 {
+        didSet { UserDefaults.standard.set(speedMultiplier, forKey: "locus.speedMultiplier") }
+    }
+    @Published var routeLoopEnabled = false {
+        didSet { UserDefaults.standard.set(routeLoopEnabled, forKey: "locus.routeLoopEnabled") }
+    }
 
     @Published var favorites: [SavedPlace] = []
     @Published var recents: [SavedPlace] = []
@@ -96,6 +102,9 @@ final class SpoofSession: ObservableObject {
     init() {
         favorites = SavedPlace.load(key: favoritesKey)
         recents = SavedPlace.load(key: recentsKey)
+        let storedSpeed = UserDefaults.standard.double(forKey: "locus.speedMultiplier")
+        speedMultiplier = storedSpeed > 0 ? min(4.0, max(0.25, storedSpeed)) : 1.0
+        routeLoopEnabled = UserDefaults.standard.bool(forKey: "locus.routeLoopEnabled")
     }
 
     var isSpoofing: Bool {
@@ -140,6 +149,11 @@ final class SpoofSession: ObservableObject {
     /// Best-known real device coordinate (not the teleport pin).
     var realCoordinate: CLLocationCoordinate2D? {
         locationKeeper.lastKnownCoordinate
+    }
+
+    /// Real GPS fix converted for display on Apple map tiles.
+    var realMapCoordinate: CLLocationCoordinate2D? {
+        realCoordinate.map(ChinaCoordinateTransform.systemCoordinateToMapCoordinate)
     }
 
     /// Start lightweight GPS updates for the map puck / locate button.
@@ -187,33 +201,37 @@ final class SpoofSession: ObservableObject {
         let mode = travelMode
         routeTask = Task { [weak self] in
             guard let self else { return }
-            var previous = coordinates[0]
-            await MainActor.run {
-                self.apply(previous, pairing: pairing, markRecent: true)
-            }
-            for next in coordinates.dropFirst() {
+            var firstPass = true
+            repeat {
                 if Task.isCancelled { break }
-                let distance = CLLocation(latitude: previous.latitude, longitude: previous.longitude)
-                    .distance(from: CLLocation(latitude: next.latitude, longitude: next.longitude))
-                var speed = mode.baseSpeed * Double.random(in: 0.88...1.12)
-                speed = max(0.8, speed)
-                let stepMeters: CLLocationDistance = min(12, max(4, speed * 0.5))
-                let steps = max(1, Int(ceil(distance / stepMeters)))
-                for i in 1...steps {
+                var previous = coordinates[0]
+                self.apply(previous, pairing: pairing, markRecent: firstPass)
+                firstPass = false
+
+                for next in coordinates.dropFirst() {
                     if Task.isCancelled { break }
-                    let t = Double(i) / Double(steps)
-                    let coord = CLLocationCoordinate2D(
-                        latitude: previous.latitude + (next.latitude - previous.latitude) * t,
-                        longitude: previous.longitude + (next.longitude - previous.longitude) * t
-                    )
-                    let delay = stepMeters / speed
-                    try? await Task.sleep(nanoseconds: UInt64(delay * 1_000_000_000))
-                    await MainActor.run {
+                    let distance = CLLocation(latitude: previous.latitude, longitude: previous.longitude)
+                        .distance(from: CLLocation(latitude: next.latitude, longitude: next.longitude))
+                    var speed = mode.baseSpeed * self.speedMultiplier * Double.random(in: 0.88...1.12)
+                    speed = max(0.2, speed)
+                    let stepMeters: CLLocationDistance = min(12, max(1, speed * 0.5))
+                    let steps = max(1, Int(ceil(distance / stepMeters)))
+                    for i in 1...steps {
+                        if Task.isCancelled { break }
+                        let t = Double(i) / Double(steps)
+                        let coord = CLLocationCoordinate2D(
+                            latitude: previous.latitude + (next.latitude - previous.latitude) * t,
+                            longitude: previous.longitude + (next.longitude - previous.longitude) * t
+                        )
+                        let delay = max(0.05, stepMeters / speed)
+                        try? await Task.sleep(nanoseconds: UInt64(delay * 1_000_000_000))
+                        if Task.isCancelled { break }
                         self.apply(coord, pairing: pairing, markRecent: false)
                     }
+                    previous = next
                 }
-                previous = next
-            }
+            } while self.routeLoopEnabled && !Task.isCancelled
+            self.routeTask = nil
         }
     }
 
@@ -335,7 +353,7 @@ final class SpoofSession: ObservableObject {
         guard magnitude > 0.08 else { return }
         let nx = joystickVector.dx / magnitude
         let ny = -joystickVector.dy / magnitude
-        let speed = travelMode.baseSpeed * min(1.0, magnitude) * Double.random(in: 0.9...1.1)
+        let speed = travelMode.baseSpeed * speedMultiplier * min(1.0, magnitude) * Double.random(in: 0.9...1.1)
         let dt = 0.25
         let meters = speed * dt
         let next = offset(coordinate: current, eastMeters: nx * meters, northMeters: ny * meters)

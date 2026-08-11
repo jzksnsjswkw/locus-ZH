@@ -192,8 +192,10 @@ struct MapHomeView: View {
                 .submitLabel(.search)
                 .onSubmit {
                     searchFocused = false
+                    searchTextDirectly()
                 }
                 .onChange(of: searchText) { _, value in
+                    search.region = searchRegion
                     search.query = value
                 }
             if searchFocused || !searchText.isEmpty {
@@ -303,7 +305,7 @@ struct MapHomeView: View {
                     latitudinalMeters: meters,
                     longitudinalMeters: meters
                 ))
-            } else if let real = session.realCoordinate {
+            } else if let real = session.realMapCoordinate {
                 position = .region(MKCoordinateRegion(
                     center: real,
                     latitudinalMeters: meters,
@@ -333,6 +335,36 @@ struct MapHomeView: View {
         .foregroundStyle(.primary)
     }
 
+    private var searchRegion: MKCoordinateRegion {
+        let center = session.simulated ?? session.pin ?? session.realMapCoordinate ??
+            CLLocationCoordinate2D(latitude: 37.3349, longitude: -122.0090)
+        return MKCoordinateRegion(center: center, latitudinalMeters: 80_000, longitudinalMeters: 80_000)
+    }
+
+    private func searchTextDirectly() {
+        let query = searchText.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !query.isEmpty else { return }
+        Task {
+            let request = MKLocalSearch.Request()
+            request.naturalLanguageQuery = query
+            request.region = searchRegion
+            if let response = try? await MKLocalSearch(request: request).start(),
+               let item = response.mapItems.first {
+                let coord = item.placemark.coordinate
+                await MainActor.run {
+                    session.pin = coord
+                    pinPlaceName = item.name ?? query
+                    position = .region(MKCoordinateRegion(center: coord, latitudinalMeters: 1200, longitudinalMeters: 1200))
+                    searchText = ""
+                    search.query = ""
+                    session.pushNamedRecent(name: item.name ?? query, coordinate: coord)
+                }
+            } else {
+                await MainActor.run { session.lastError = "No matching place found." }
+            }
+        }
+    }
+
     private func select(completion: MKLocalSearchCompletion) {
         Task {
             let request = MKLocalSearch.Request(completion: completion)
@@ -347,7 +379,6 @@ struct MapHomeView: View {
                     searchText = ""
                     search.query = ""
                     searchFocused = false
-                    session.addFavorite(name: title, coordinate: coord)
                     session.pushNamedRecent(name: title, coordinate: coord)
                 }
             }
@@ -431,9 +462,12 @@ final class PlaceSearchCompleter: NSObject, ObservableObject, MKLocalSearchCompl
     private let completer = MKLocalSearchCompleter()
 
     var query: String = "" {
-        didSet {
-            completer.queryFragment = query
-        }
+        didSet { completer.queryFragment = query }
+    }
+
+    var region: MKCoordinateRegion {
+        get { completer.region }
+        set { completer.region = newValue }
     }
 
     override init() {

@@ -187,7 +187,7 @@ final class SpoofSession: ObservableObject {
         routeActive = false
         routePaused = false
         activeRoute.removeAll()
-        let start = simulated ?? pin ?? locationKeeper.lastKnownCoordinate
+        let start = simulated ?? pin ?? realMapCoordinate
         guard let start else {
             lastError = "使用摇杆前请先放置图钉或开始模拟定位。"
             return

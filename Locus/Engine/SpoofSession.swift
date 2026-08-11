@@ -288,6 +288,11 @@ final class SpoofSession: ObservableObject {
     }
 
     private func apply(_ coordinate: CLLocationCoordinate2D, pairing: PairingStore, markRecent: Bool) {
+        guard CLLocationCoordinate2DIsValid(coordinate),
+              coordinate.latitude.isFinite, coordinate.longitude.isFinite else {
+            lastError = "The selected map coordinate is invalid. Please drop the pin again."
+            return
+        }
         if status == .idle || status.isDropped {
             status = .connecting
         }

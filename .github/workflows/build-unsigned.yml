@@ -5,7 +5,7 @@ on:
 
 jobs:
   build:
-    runs-on: macos-15
+    runs-on: macos-26
     timeout-minutes: 30
     steps:
       - uses: actions/checkout@v4
@@ -16,6 +16,7 @@ jobs:
       - name: Build unsigned app
         run: |
           set -o pipefail
+          mkdir -p build
           xcodebuild \
             -project Locus.xcodeproj \
             -scheme Locus \
@@ -45,3 +46,5 @@ jobs:
             build/Locus-unsigned.ipa
             build/xcodebuild.log
           if-no-files-found: error
+
+

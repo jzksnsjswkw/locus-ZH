@@ -297,9 +297,10 @@ final class SpoofSession: ObservableObject {
             status = .connecting
         }
         isBusy = true
+        let systemCoordinate = ChinaCoordinateTransform.mapCoordinateToSystemCoordinate(coordinate)
         let result = LocationEngine.set(
-            latitude: coordinate.latitude,
-            longitude: coordinate.longitude,
+            latitude: systemCoordinate.latitude,
+            longitude: systemCoordinate.longitude,
             pairingPath: pairing.pairingPath,
             deviceIP: TunnelConfig.targetIP
         )
@@ -346,9 +347,10 @@ final class SpoofSession: ObservableObject {
         resendTimer = Timer.scheduledTimer(withTimeInterval: 8, repeats: true) { [weak self] _ in
             Task { @MainActor in
                 guard let self, let sim = self.simulated else { return }
+                let systemCoordinate = ChinaCoordinateTransform.mapCoordinateToSystemCoordinate(sim)
                 _ = LocationEngine.set(
-                    latitude: sim.latitude,
-                    longitude: sim.longitude,
+                    latitude: systemCoordinate.latitude,
+                    longitude: systemCoordinate.longitude,
                     pairingPath: pairing.pairingPath,
                     deviceIP: TunnelConfig.targetIP
                 )

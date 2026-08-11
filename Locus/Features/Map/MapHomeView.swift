@@ -22,7 +22,6 @@ struct MapHomeView: View {
     @State private var suppressNextMapTap = false
     /// Set when the pin comes from search / a named place so starring keeps the title.
     @State private var pinPlaceName: String?
-    private let mapCoordinateSpaceName = "locus.map.surface"
 
     private var mapStyle: MapStyle {
         switch session.mapStyleIndex {
@@ -46,7 +45,6 @@ struct MapHomeView: View {
                             MapDropPin(
                                 selected: pinSelected,
                                 isDragging: isDraggingPin,
-                                coordinateSpaceName: mapCoordinateSpaceName,
                                 onSelect: {
                                     searchFocused = false
                                     suppressNextMapTap = true
@@ -74,7 +72,7 @@ struct MapHomeView: View {
                                     isDraggingPin = true
                                 },
                                 onDragMoved: { globalPoint in
-                                    if let coord = proxy.convert(globalPoint, from: .named(mapCoordinateSpaceName)) {
+                                    if let coord = proxy.convert(globalPoint, from: .global) {
                                         session.pin = coord
                                     }
                                 },
@@ -107,8 +105,7 @@ struct MapHomeView: View {
                 }
                 .mapStyle(mapStyle)
                 .mapControlVisibility(.hidden)
-                .coordinateSpace(name: mapCoordinateSpaceName)
-                .onTapGesture(coordinateSpace: .named(mapCoordinateSpaceName)) { point in
+                .onTapGesture { point in
                     searchFocused = false
                     guard !suppressNextMapTap, !isDraggingPin else { return }
                     pinSelected = false
@@ -154,7 +151,7 @@ struct MapHomeView: View {
     }
 
     private func placePin(at point: CGPoint, proxy: MapProxy) {
-        guard let coord = proxy.convert(point, from: .named(mapCoordinateSpaceName)) else { return }
+        guard let coord = proxy.convert(point, from: .local) else { return }
         if drawMode {
             drawnPath.append(coord)
         } else {

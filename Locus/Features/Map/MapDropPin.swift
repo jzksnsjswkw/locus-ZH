@@ -5,7 +5,6 @@ import SwiftUI
 struct MapDropPin: View {
     var selected: Bool
     var isDragging: Bool
-    var coordinateSpaceName: String
     var onSelect: () -> Void
     var onRemove: () -> Void
     var onDragBegan: () -> Void
@@ -51,7 +50,7 @@ struct MapDropPin: View {
 
     private var dragGesture: some Gesture {
         LongPressGesture(minimumDuration: 0.35)
-            .sequenced(before: DragGesture(minimumDistance: 0, coordinateSpace: .named(coordinateSpaceName)))
+            .sequenced(before: DragGesture(minimumDistance: 0, coordinateSpace: .global))
             .onChanged { value in
                 switch value {
                 case .first(true):

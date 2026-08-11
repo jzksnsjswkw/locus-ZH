@@ -11,10 +11,10 @@ enum TravelMode: String, CaseIterable, Identifiable {
 
     var title: String {
         switch self {
-        case .walk: return "Walk"
-        case .run: return "Run"
-        case .cycle: return "Cycle"
-        case .drive: return "Drive"
+        case .walk: return "步行"
+        case .run: return "跑步"
+        case .cycle: return "骑行"
+        case .drive: return "驾车"
         }
     }
 
@@ -54,11 +54,11 @@ enum SpoofStatus: Equatable {
 
     var label: String {
         switch self {
-        case .idle: return "Not Spoofing"
+        case .idle: return "未模拟定位"
         case .connecting: return "Starting…"
-        case .active: return "Spoofing"
+        case .active: return "正在模拟定位"
         case .reconnecting: return "Reconnecting…"
-        case .dropped: return "Interrupted"
+        case .dropped: return "连接中断"
         }
     }
 
@@ -79,6 +79,9 @@ final class SpoofSession: ObservableObject {
     @Published var isBusy = false
     @Published var joystickActive = false
     @Published private(set) var routeActive = false
+    @Published private(set) var routePaused = false
+    @Published private(set) var routeProgress = 0.0
+    @Published private(set) var routeLap = 0
     @Published var speedMultiplier: Double = 1.0 {
         didSet { UserDefaults.standard.set(speedMultiplier, forKey: "locus.speedMultiplier") }
     }
@@ -93,6 +96,8 @@ final class SpoofSession: ObservableObject {
     private var healthTimer: Timer?
     private var joystickTimer: Timer?
     private var routeTask: Task<Void, Never>?
+    private var activeRoute: [CLLocationCoordinate2D] = []
+    private var routeGeneration = UUID()
     private var backgroundTask = UIBackgroundTaskIdentifier.invalid
     private var joystickVector: CGVector = .zero
     private let locationKeeper = BackgroundKeepAlive()
@@ -116,7 +121,7 @@ final class SpoofSession: ObservableObject {
 
     func teleport(to coordinate: CLLocationCoordinate2D, pairing: PairingStore) {
         guard pairing.hasPairingFile else {
-            lastError = "Import an RPPairing file in Settings first."
+            lastError = "请先在设置中导入 RPPairing 文件。"
             return
         }
         pin = coordinate
@@ -124,6 +129,11 @@ final class SpoofSession: ObservableObject {
     }
 
     var isMoving: Bool { routeActive || joystickActive }
+    var canResumeRoute: Bool { routePaused && activeRoute.count >= 2 && simulated != nil }
+
+    func adjustSpeed(by delta: Double) {
+        speedMultiplier = min(4.0, max(0.25, speedMultiplier + delta))
+    }
 
     /// First press while moving freezes at the current simulated coordinate.
     /// A later press clears the developer-location override and returns to GPS.
@@ -169,15 +179,17 @@ final class SpoofSession: ObservableObject {
 
     func startJoystick(pairing: PairingStore) {
         guard pairing.hasPairingFile else {
-            lastError = "Import an RPPairing file in Settings first."
+            lastError = "请先在设置中导入 RPPairing 文件。"
             return
         }
         routeTask?.cancel()
         routeTask = nil
         routeActive = false
+        routePaused = false
+        activeRoute.removeAll()
         let start = simulated ?? pin ?? locationKeeper.lastKnownCoordinate
         guard let start else {
-            lastError = "Drop a pin or teleport somewhere before using the joystick."
+            lastError = "使用摇杆前请先放置图钉或开始模拟定位。"
             return
         }
         if simulated == nil {
@@ -197,10 +209,24 @@ final class SpoofSession: ObservableObject {
     }
 
     func stopMovement() {
+        let wasRouting = routeActive
+        routeGeneration = UUID()
         routeTask?.cancel()
         routeTask = nil
         routeActive = false
+        routePaused = wasRouting && activeRoute.count >= 2
         stopJoystick()
+    }
+
+    func resumeRoute(pairing: PairingStore) {
+        guard canResumeRoute, let current = simulated else { return }
+        let nearest = activeRoute.indices.min { lhs, rhs in
+            Self.distance(from: current, to: activeRoute[lhs]) < Self.distance(from: current, to: activeRoute[rhs])
+        } ?? activeRoute.startIndex
+        var remaining = [current]
+        remaining.append(contentsOf: activeRoute[nearest...])
+        guard remaining.count >= 2 else { return }
+        startRoute(remaining, pairing: pairing, preserveOriginalRoute: true)
     }
 
     func stopJoystick() {
@@ -212,23 +238,40 @@ final class SpoofSession: ObservableObject {
 
     func followRoute(_ coordinates: [CLLocationCoordinate2D], pairing: PairingStore) {
         guard pairing.hasPairingFile, coordinates.count >= 2 else { return }
+        activeRoute = coordinates
+        routeProgress = 0
+        routeLap = 0
+        startRoute(coordinates, pairing: pairing, preserveOriginalRoute: true)
+    }
+
+    private func startRoute(
+        _ coordinates: [CLLocationCoordinate2D],
+        pairing: PairingStore,
+        preserveOriginalRoute: Bool
+    ) {
+        routeGeneration = UUID()
+        let generation = routeGeneration
         routeTask?.cancel()
         stopJoystick()
         routeActive = true
+        routePaused = false
+        if !preserveOriginalRoute { activeRoute = coordinates }
         let mode = travelMode
         routeTask = Task { [weak self] in
             guard let self else { return }
             var firstPass = true
+            var lap = 0
             repeat {
                 if Task.isCancelled { break }
+                lap += 1
+                self.routeLap = lap
                 var previous = coordinates[0]
                 self.apply(previous, pairing: pairing, markRecent: firstPass)
                 firstPass = false
 
-                for next in coordinates.dropFirst() {
+                for (segmentIndex, next) in coordinates.dropFirst().enumerated() {
                     if Task.isCancelled { break }
-                    let distance = CLLocation(latitude: previous.latitude, longitude: previous.longitude)
-                        .distance(from: CLLocation(latitude: next.latitude, longitude: next.longitude))
+                    let distance = Self.distance(from: previous, to: next)
                     var speed = mode.baseSpeed * self.speedMultiplier * Double.random(in: 0.88...1.12)
                     speed = max(0.2, speed)
                     let stepMeters: CLLocationDistance = min(12, max(1, speed * 0.5))
@@ -240,17 +283,30 @@ final class SpoofSession: ObservableObject {
                             latitude: previous.latitude + (next.latitude - previous.latitude) * t,
                             longitude: previous.longitude + (next.longitude - previous.longitude) * t
                         )
+                        speed = max(0.2, mode.baseSpeed * self.speedMultiplier * Double.random(in: 0.94...1.06))
                         let delay = max(0.05, stepMeters / speed)
                         try? await Task.sleep(nanoseconds: UInt64(delay * 1_000_000_000))
                         if Task.isCancelled { break }
                         self.apply(coord, pairing: pairing, markRecent: false)
+                        self.routeProgress = min(1, (Double(segmentIndex) + t) / Double(max(1, coordinates.count - 1)))
                     }
                     previous = next
                 }
+                if self.routeLoopEnabled { self.routeProgress = 0 }
             } while self.routeLoopEnabled && !Task.isCancelled
+            guard self.routeGeneration == generation else { return }
             self.routeTask = nil
             self.routeActive = false
+            self.routePaused = false
         }
+    }
+
+    private static func distance(
+        from start: CLLocationCoordinate2D,
+        to end: CLLocationCoordinate2D
+    ) -> CLLocationDistance {
+        CLLocation(latitude: start.latitude, longitude: start.longitude)
+            .distance(from: CLLocation(latitude: end.latitude, longitude: end.longitude))
     }
 
     func addFavorite(name: String, coordinate: CLLocationCoordinate2D) {

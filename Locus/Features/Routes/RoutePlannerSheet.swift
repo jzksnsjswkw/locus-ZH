@@ -17,17 +17,17 @@ struct RoutePlannerSheet: View {
     var body: some View {
         NavigationStack {
             List {
-                Section("Road route") {
-                    Button("Use current pin / spoof as start") {
+                Section("道路路线") {
+                    Button("使用当前图钉或模拟位置作为起点") {
                         start = session.simulated ?? session.pin
                     }
-                    Button("Use current pin as end") {
+                    Button("使用当前图钉作为终点") {
                         end = session.pin
                     }
-                    LabeledContent("Start") {
+                    LabeledContent("起点") {
                         Text(coordText(start)).font(.caption.monospaced())
                     }
-                    LabeledContent("End") {
+                    LabeledContent("终点") {
                         Text(coordText(end)).font(.caption.monospaced())
                     }
                     Button {
@@ -36,15 +36,15 @@ struct RoutePlannerSheet: View {
                         if isRouting {
                             ProgressView()
                         } else {
-                            Label("Build walk/drive route on roads", systemImage: "road.lanes")
+                            Label("沿道路规划步行或驾车路线", systemImage: "road.lanes")
                         }
                     }
                     .disabled(isRouting)
                 }
 
-                Section("Playback") {
+                Section("轨迹运行") {
                     HStack {
-                        Label("Speed", systemImage: "speedometer")
+                        Label("速度", systemImage: "speedometer")
                         Spacer()
                         Text(String(format: "%.2fx · %.1f km/h", session.speedMultiplier, session.travelMode.baseSpeed * session.speedMultiplier * 3.6))
                             .font(.caption.monospacedDigit())
@@ -52,37 +52,37 @@ struct RoutePlannerSheet: View {
                     }
                     Slider(value: $session.speedMultiplier, in: 0.25...4.0, step: 0.25)
                     Toggle(isOn: $session.routeLoopEnabled) {
-                        Label("Loop route", systemImage: "repeat")
+                        Label("循环运行轨迹", systemImage: "repeat")
                     }
                 }
 
-                Section("Play / draw / GPX") {
+                Section("运行、手绘与 GPX") {
                     Button {
                         onUseDrawn()
                     } label: {
-                        Label("Use drawn path from map", systemImage: "pencil.tip")
+                        Label("使用地图上手绘的轨迹", systemImage: "pencil.tip")
                     }
                     Button(action: onPlay) {
-                        Label("Follow route", systemImage: "play.fill")
+                        Label("开始运行轨迹", systemImage: "play.fill")
                     }
                     Button(action: onImportGPX) {
-                        Label("Import GPX", systemImage: "square.and.arrow.down")
+                        Label("导入 GPX", systemImage: "square.and.arrow.down")
                     }
                     Button(action: onExportGPX) {
-                        Label("Export GPX", systemImage: "square.and.arrow.up")
+                        Label("导出 GPX", systemImage: "square.and.arrow.up")
                     }
                 }
 
                 Section {
-                    Text("Road routing uses Apple Maps when available and falls back to a direct route when the route server is unreachable. Speed applies to route playback and the joystick.")
+                    Text("优先使用 Apple 地图规划道路路线；路线服务器不可用时自动生成直线备用路线。速度设置同时作用于轨迹和摇杆。")
                         .font(.footnote)
                         .foregroundStyle(.secondary)
                 }
             }
-            .navigationTitle("Routes")
+            .navigationTitle("轨迹")
             .toolbar {
                 ToolbarItem(placement: .cancellationAction) {
-                    Button("Done") { dismiss() }
+                    Button("完成") { dismiss() }
                 }
             }
         }

@@ -2,6 +2,15 @@ import SwiftUI
 import NetworkExtension
 import UIKit
 
+enum MapChromeLayout {
+    static let horizontalPadding: CGFloat = 16
+    static let spacing: CGFloat = 10
+    static let primaryHeight: CGFloat = 72
+    static let rightColumnWidth: CGFloat = 72
+    static let bottomPadding: CGFloat = 8
+    static let rightRailClearance = bottomPadding + primaryHeight + spacing
+}
+
 struct RootView: View {
     @EnvironmentObject private var session: SpoofSession
     @EnvironmentObject private var pairing: PairingStore
@@ -44,8 +53,8 @@ struct RootView: View {
                     .transition(.move(edge: .bottom).combined(with: .opacity))
                 }
             }
-            .padding(.horizontal, 16)
-            .padding(.bottom, 8)
+            .padding(.horizontal, MapChromeLayout.horizontalPadding)
+            .padding(.bottom, MapChromeLayout.bottomPadding)
         }
         .sheet(isPresented: $showSettings) {
             SettingsView()
@@ -126,8 +135,11 @@ struct RootView: View {
             }
         } label: {
             Image(systemName: "magnifyingglass")
-                .font(.title3.weight(.semibold))
-                .frame(width: 52, height: 52)
+                .font(.title2.weight(.semibold))
+                .frame(
+                    width: MapChromeLayout.rightColumnWidth,
+                    height: MapChromeLayout.primaryHeight
+                )
                 .contentShape(Circle())
         }
         .buttonStyle(.plain)
@@ -349,6 +361,7 @@ struct BottomControlsView: View {
         .locusGlass(.regular, in: trayShape)
         .contentShape(trayShape)
         .frame(maxWidth: .infinity, alignment: .trailing)
+        .frame(minHeight: MapChromeLayout.primaryHeight)
         .animation(.easeOut(duration: 0.18), value: session.joystickActive)
         .animation(.spring(response: 0.28, dampingFraction: 0.82), value: showTravelModes)
     }
@@ -464,6 +477,7 @@ struct BottomControlsView: View {
 
             Button {
                 showTravelModes = false
+                UIImpactFeedbackGenerator(style: .light).impactOccurred()
                 session.resumeRoute(pairing: pairing)
             } label: {
                 Text("继续")

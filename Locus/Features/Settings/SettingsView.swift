@@ -1,3 +1,4 @@
+import ActivityKit
 import SwiftUI
 import UniformTypeIdentifiers
 
@@ -12,6 +13,7 @@ struct SettingsView: View {
     @State private var tunnelIP = TunnelConfig.targetIP
     @State private var localDevVPNInstalled = LocalDevVPN.isInstalled
     @AppStorage("locus.liveActivityEnabled") private var liveActivityEnabled = true
+    @AppStorage(LocusLiveActivityController.statusKey) private var liveActivityStatus = "尚未启动"
     @Environment(\.scenePhase) private var scenePhase
 
     private var supportsOnDevicePairing: Bool {
@@ -23,6 +25,13 @@ struct SettingsView: View {
         let short = Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String ?? "—"
         let build = Bundle.main.infoDictionary?["CFBundleVersion"] as? String ?? ""
         return build.isEmpty ? short : "\(short) (\(build))"
+    }
+
+    private var liveActivityExtensionIncluded: Bool {
+        guard let plugInsURL = Bundle.main.builtInPlugInsURL else { return false }
+        return FileManager.default.fileExists(
+            atPath: plugInsURL.appendingPathComponent("LocusLiveActivity.appex").path
+        )
     }
 
     var body: some View {
@@ -102,10 +111,26 @@ struct SettingsView: View {
                         Label("灵动岛实时状态", systemImage: "waveform.path.ecg.rectangle")
                     }
                     .tint(LocusTheme.accent)
+
+                    LabeledContent(
+                        "系统权限",
+                        value: ActivityAuthorizationInfo().areActivitiesEnabled ? "已允许" : "未允许"
+                    )
+                    LabeledContent(
+                        "扩展文件",
+                        value: liveActivityExtensionIncluded ? "已包含" : "缺失"
+                    )
+                    LabeledContent("运行状态") {
+                        Text(liveActivityStatus)
+                            .font(.footnote)
+                            .foregroundStyle(liveActivityStatus == "运行中" ? LocusTheme.statusGood : .secondary)
+                            .lineLimit(3)
+                            .multilineTextAlignment(.trailing)
+                    }
                 } header: {
                     Text("实时状态")
                 } footer: {
-                    Text("模拟定位时在灵动岛和锁定屏幕显示状态、坐标与所在地区，每 10 秒更新一次。")
+                    Text("模拟定位时在灵动岛和锁定屏幕显示状态、坐标与所在地区，每 10 秒更新一次。灵动岛仅适用于支持机型；LiveContainer 即使保留扩展文件，也可能因未注册客体 App Extension 而无法显示。")
                 }
 
                 Section("隐私") {

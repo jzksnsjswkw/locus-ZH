@@ -4,6 +4,7 @@ import Foundation
 
 actor LocusLiveActivityController {
     static let shared = LocusLiveActivityController()
+    static let statusKey = "locus.liveActivityLastStatus"
     private static let enabledKey = "locus.liveActivityEnabled"
 
     private var currentActivity: Activity<LocusActivityAttributes>?
@@ -18,8 +19,19 @@ actor LocusLiveActivityController {
     func sync(isActive: Bool, status: String, coordinate: CLLocationCoordinate2D?) async {
         let storedPreference = UserDefaults.standard.object(forKey: Self.enabledKey) as? Bool
         let isEnabled = storedPreference ?? true
-        guard isEnabled, isActive, let coordinate else {
+        guard isEnabled else {
             await end()
+            recordStatus("已关闭")
+            return
+        }
+        guard isActive, let coordinate else {
+            await end()
+            recordStatus("等待模拟定位")
+            return
+        }
+        guard ActivityAuthorizationInfo().areActivitiesEnabled else {
+            await end()
+            recordStatus("系统未允许实时活动")
             return
         }
 
@@ -52,10 +64,10 @@ actor LocusLiveActivityController {
             await currentActivity.update(content)
             lastPublishedAt = now
             lastPublishedStatus = status
+            recordStatus("运行中")
             return
         }
 
-        guard ActivityAuthorizationInfo().areActivitiesEnabled else { return }
         do {
             currentActivity = try Activity.request(
                 attributes: LocusActivityAttributes(title: "Locus"),
@@ -64,7 +76,9 @@ actor LocusLiveActivityController {
             )
             lastPublishedAt = now
             lastPublishedStatus = status
+            recordStatus("运行中")
         } catch {
+            recordStatus("启动失败：\(error.localizedDescription)")
             NSLog("[Locus] Live Activity start failed: %@", error.localizedDescription)
         }
     }
@@ -98,5 +112,10 @@ actor LocusLiveActivityController {
         currentActivity = nil
         lastPublishedAt = nil
         lastPublishedStatus = nil
+    }
+
+    private func recordStatus(_ status: String) {
+        guard UserDefaults.standard.string(forKey: Self.statusKey) != status else { return }
+        UserDefaults.standard.set(status, forKey: Self.statusKey)
     }
 }

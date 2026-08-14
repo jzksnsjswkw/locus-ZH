@@ -34,6 +34,10 @@ struct SettingsView: View {
         )
     }
 
+    private var liveActivityDeclaredByMainApp: Bool {
+        Bundle.main.object(forInfoDictionaryKey: "NSSupportsLiveActivities") as? Bool == true
+    }
+
     var body: some View {
         NavigationStack {
             List {
@@ -120,6 +124,10 @@ struct SettingsView: View {
                         "扩展文件",
                         value: liveActivityExtensionIncluded ? "已包含" : "缺失"
                     )
+                    LabeledContent(
+                        "主应用声明",
+                        value: liveActivityDeclaredByMainApp ? "已包含" : "缺失"
+                    )
                     LabeledContent("运行状态") {
                         Text(liveActivityStatus)
                             .font(.footnote)
@@ -130,7 +138,7 @@ struct SettingsView: View {
                 } header: {
                     Text("实时状态")
                 } footer: {
-                    Text("模拟定位时在灵动岛和锁定屏幕显示状态、坐标与所在地区，每 10 秒更新一次。灵动岛仅适用于支持机型；LiveContainer 即使保留扩展文件，也可能因未注册客体 App Extension 而无法显示。")
+                    Text("模拟定位时在灵动岛和锁定屏幕优先显示轨迹已行驶里程与实际运行时间，所在地区作为辅助信息，每 10 秒更新一次。灵动岛仅适用于支持机型；LiveContainer 必须同时保留主应用声明并注册实时活动扩展。")
                 }
 
                 Section("隐私") {
@@ -206,7 +214,9 @@ struct SettingsView: View {
                     await LocusLiveActivityController.shared.sync(
                         isActive: enabled && session.isSpoofing,
                         status: session.status.label,
-                        coordinate: session.simulated
+                        coordinate: session.simulated,
+                        distanceTraveled: session.routeDistanceTraveled,
+                        elapsedTime: session.routeElapsedTime
                     )
                 }
             }

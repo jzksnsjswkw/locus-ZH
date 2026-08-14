@@ -226,20 +226,18 @@ struct MapHomeView: View {
                !session.routeActive,
                !session.routePaused,
                !searchPresented {
-                VStack {
-                    Spacer()
-                    HStack(spacing: MapChromeLayout.spacing) {
-                        routeReadyActions
-                            .frame(maxWidth: 200)
-                            .frame(maxWidth: .infinity)
+                HStack(spacing: MapChromeLayout.spacing) {
+                    routeReadyActions
+                        .frame(maxWidth: 180)
+                        .frame(maxWidth: .infinity)
 
-                        Color.clear
-                            .frame(width: MapChromeLayout.rightColumnWidth)
-                            .allowsHitTesting(false)
-                    }
-                    .padding(.horizontal, MapChromeLayout.horizontalPadding)
-                    .padding(.bottom, routeActionBottomClearance)
+                    Color.clear
+                        .frame(width: MapChromeLayout.rightColumnWidth)
+                        .allowsHitTesting(false)
                 }
+                .padding(.horizontal, MapChromeLayout.horizontalPadding)
+                .padding(.bottom, routeActionBottomClearance)
+                .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .bottom)
                 .animation(.spring(response: 0.32, dampingFraction: 0.84), value: session.routeActive)
                 .animation(.spring(response: 0.32, dampingFraction: 0.84), value: session.routePaused)
                 .animation(.spring(response: 0.38, dampingFraction: 0.78), value: session.joystickActive)
@@ -298,6 +296,11 @@ struct MapHomeView: View {
             if newValue == nil {
                 pinSelected = false
                 pinExpandedActions = false
+            }
+        }
+        .onChange(of: session.status) { _, status in
+            if case .idle = status {
+                clearRoutePresentation()
             }
         }
         .onReceive(NotificationCenter.default.publisher(for: .locusImportGPX)) { note in
@@ -492,7 +495,7 @@ struct MapHomeView: View {
             } label: {
                 Image(systemName: currentPinIsFavorite ? "star.fill" : "star")
                     .font(.body.weight(.semibold))
-                    .frame(width: 52, height: 52)
+                    .frame(width: 48, height: 48)
                     .contentShape(Circle())
             }
             .buttonStyle(.plain)
@@ -511,13 +514,13 @@ struct MapHomeView: View {
             } label: {
                 Image(systemName: "location.fill")
                     .font(.body.weight(.semibold))
-                    .frame(width: 52, height: 52)
+                    .frame(width: 48, height: 48)
                     .contentShape(Circle())
             }
             .buttonStyle(.plain)
             .accessibilityLabel("回到当前位置")
         }
-        .padding(10)
+        .padding(4)
         .frame(width: MapChromeLayout.rightColumnWidth)
         .locusGlass(.clear, in: RoundedRectangle(cornerRadius: 26, style: .continuous))
         .foregroundStyle(.primary)
@@ -548,7 +551,7 @@ struct MapHomeView: View {
                 .font(.subheadline.weight(.bold))
                 .foregroundStyle(color)
                 .frame(maxWidth: .infinity)
-                .frame(height: 36)
+                .frame(height: 34)
                 .contentShape(Capsule())
         }
         .buttonStyle(.plain)
@@ -823,15 +826,19 @@ struct MapHomeView: View {
 
     private func deleteGeneratedRoute() {
         showTravelModes = false
-        session.discardRoute()
         withAnimation(.easeOut(duration: 0.2)) {
-            routeCoords.removeAll()
-            drawnPath.removeAll()
-            routeStart = nil
-            routeEnd = nil
+            clearRoutePresentation()
         }
         UINotificationFeedbackGenerator().notificationOccurred(.success)
         showFavoriteToast("轨迹已删除")
+    }
+
+    private func clearRoutePresentation() {
+        session.discardRoute()
+        routeCoords.removeAll()
+        drawnPath.removeAll()
+        routeStart = nil
+        routeEnd = nil
     }
 
     private func importGPX(_ url: URL) {

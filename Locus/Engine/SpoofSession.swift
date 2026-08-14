@@ -82,6 +82,8 @@ final class SpoofSession: ObservableObject {
     @Published private(set) var routePaused = false
     @Published private(set) var routeProgress = 0.0
     @Published private(set) var routeLap = 0
+    @Published private(set) var routeDistanceTraveled: CLLocationDistance = 0
+    @Published private(set) var routeElapsedTime: TimeInterval = 0
     @Published var speedMultiplier: Double = 1.0 {
         didSet { UserDefaults.standard.set(speedMultiplier, forKey: "locus.speedMultiplier") }
     }
@@ -190,6 +192,10 @@ final class SpoofSession: ObservableObject {
         routeActive = false
         routePaused = false
         activeRoute.removeAll()
+        routeProgress = 0
+        routeLap = 0
+        routeDistanceTraveled = 0
+        routeElapsedTime = 0
         let start = simulated ?? pin ?? realMapCoordinate
         guard let start else {
             lastError = "使用摇杆前请先放置图钉或开始模拟定位。"
@@ -248,6 +254,8 @@ final class SpoofSession: ObservableObject {
         activeRoute.removeAll()
         routeProgress = 0
         routeLap = 0
+        routeDistanceTraveled = 0
+        routeElapsedTime = 0
     }
 
     func followRoute(_ coordinates: [CLLocationCoordinate2D], pairing: PairingStore) {
@@ -255,6 +263,8 @@ final class SpoofSession: ObservableObject {
         activeRoute = coordinates
         routeProgress = 0
         routeLap = 0
+        routeDistanceTraveled = 0
+        routeElapsedTime = 0
         startRoute(coordinates, pairing: pairing, preserveOriginalRoute: true)
     }
 
@@ -280,6 +290,7 @@ final class SpoofSession: ObservableObject {
                 lap += 1
                 self.routeLap = lap
                 var previous = coordinates[0]
+                var emittedCoordinate = previous
                 self.apply(previous, pairing: pairing, markRecent: firstPass)
                 firstPass = false
 
@@ -301,6 +312,9 @@ final class SpoofSession: ObservableObject {
                         let delay = max(0.05, stepMeters / speed)
                         try? await Task.sleep(nanoseconds: UInt64(delay * 1_000_000_000))
                         if Task.isCancelled { break }
+                        self.routeDistanceTraveled += Self.distance(from: emittedCoordinate, to: coord)
+                        self.routeElapsedTime += delay
+                        emittedCoordinate = coord
                         self.apply(coord, pairing: pairing, markRecent: false)
                         self.routeProgress = min(1, (Double(segmentIndex) + t) / Double(max(1, coordinates.count - 1)))
                     }

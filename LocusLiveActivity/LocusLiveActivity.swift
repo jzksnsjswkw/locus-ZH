@@ -25,21 +25,29 @@ struct LocusLiveActivityWidget: Widget {
                         .lineLimit(1)
                 }
                 DynamicIslandExpandedRegion(.trailing) {
-                    Text(context.state.coordinate)
-                        .font(.caption.monospaced())
-                        .foregroundStyle(.secondary)
-                        .lineLimit(1)
+                    Label(context.state.elapsed, systemImage: "timer")
+                        .font(.subheadline.monospacedDigit().weight(.semibold))
+                        .foregroundStyle(.cyan)
                 }
                 DynamicIslandExpandedRegion(.bottom) {
-                    VStack(spacing: 10) {
-                        HStack(spacing: 6) {
-                            Image(systemName: "mappin.and.ellipse")
-                                .foregroundStyle(.cyan)
-                            Text(locationText(context.state))
-                                .font(.subheadline.weight(.medium))
-                                .lineLimit(1)
-                            Spacer(minLength: 0)
+                    VStack(alignment: .leading, spacing: 8) {
+                        HStack(spacing: 18) {
+                            metric(
+                                title: "已行驶",
+                                value: context.state.distance,
+                                systemImage: "figure.walk.motion"
+                            )
+                            metric(
+                                title: "运行时间",
+                                value: context.state.elapsed,
+                                systemImage: "timer"
+                            )
                         }
+
+                        Label(locationText(context.state), systemImage: "mappin.and.ellipse")
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                            .lineLimit(1)
 
                         Link(destination: URL(string: "locus://stop")!) {
                             Label("停止模拟定位", systemImage: "stop.fill")
@@ -55,8 +63,8 @@ struct LocusLiveActivityWidget: Widget {
                 Image(systemName: "location.fill")
                     .foregroundStyle(.green)
             } compactTrailing: {
-                Text(context.state.city)
-                    .font(.caption2.weight(.semibold))
+                Text(context.state.elapsed)
+                    .font(.caption2.monospacedDigit().weight(.semibold))
                     .lineLimit(1)
             } minimal: {
                 Image(systemName: "location.fill")
@@ -76,15 +84,41 @@ struct LocusLiveActivityWidget: Widget {
                 Text(state.status)
                     .font(.headline)
                 Spacer(minLength: 0)
-                Text(state.coordinate)
-                    .font(.caption.monospaced())
-                    .foregroundStyle(.secondary)
+                Text(state.elapsed)
+                    .font(.subheadline.monospacedDigit().weight(.semibold))
+                    .foregroundStyle(.cyan)
             }
+
+            HStack(spacing: 20) {
+                metric(title: "已行驶", value: state.distance, systemImage: "figure.walk.motion")
+                metric(title: "运行时间", value: state.elapsed, systemImage: "timer")
+            }
+
             Label(locationText(state), systemImage: "mappin.and.ellipse")
-                .font(.subheadline)
-                .foregroundStyle(.cyan)
+                .font(.caption)
+                .foregroundStyle(.secondary)
+                .lineLimit(1)
+
+            Text(state.coordinate)
+                .font(.caption2.monospaced())
+                .foregroundStyle(.tertiary)
         }
         .padding()
+    }
+
+    private func metric(title: String, value: String, systemImage: String) -> some View {
+        HStack(spacing: 6) {
+            Image(systemName: systemImage)
+                .foregroundStyle(.cyan)
+            VStack(alignment: .leading, spacing: 1) {
+                Text(title)
+                    .font(.caption2)
+                    .foregroundStyle(.secondary)
+                Text(value)
+                    .font(.subheadline.monospacedDigit().weight(.semibold))
+                    .lineLimit(1)
+            }
+        }
     }
 
     private func locationText(_ state: LocusActivityAttributes.ContentState) -> String {

@@ -36,6 +36,7 @@ targets:
         MARKETING_VERSION: "1.0.2"
         CURRENT_PROJECT_VERSION: "3"
         INFOPLIST_FILE: Locus/Resources/Info.plist
+        INFOPLIST_KEY_NSSupportsLiveActivities: YES
         CODE_SIGN_ENTITLEMENTS: Locus/Resources/Locus.entitlements
         CODE_SIGN_STYLE: Automatic
         DEVELOPMENT_TEAM: ""
@@ -78,6 +79,7 @@ targets:
         MARKETING_VERSION: "1.0.2"
         CURRENT_PROJECT_VERSION: "3"
         INFOPLIST_FILE: LocusLiveActivity/Info.plist
+        INFOPLIST_KEY_NSSupportsLiveActivities: YES
         GENERATE_INFOPLIST_FILE: false
         APPLICATION_EXTENSION_API_ONLY: YES
         SKIP_INSTALL: YES

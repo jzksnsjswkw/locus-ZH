@@ -16,7 +16,13 @@ actor LocusLiveActivityController {
     private var city = "正在获取位置"
     private var country = ""
 
-    func sync(isActive: Bool, status: String, coordinate: CLLocationCoordinate2D?) async {
+    func sync(
+        isActive: Bool,
+        status: String,
+        coordinate: CLLocationCoordinate2D?,
+        distanceTraveled: CLLocationDistance,
+        elapsedTime: TimeInterval
+    ) async {
         let storedPreference = UserDefaults.standard.object(forKey: Self.enabledKey) as? Bool
         let isEnabled = storedPreference ?? true
         guard isEnabled else {
@@ -49,12 +55,16 @@ actor LocusLiveActivityController {
 
         let location = CLLocation(latitude: coordinate.latitude, longitude: coordinate.longitude)
         if shouldReverseGeocode(location) {
-            await reverseGeocode(location)
+            // Region text is secondary: never delay creation or metric updates while
+            // Apple reverse geocoding is slow, offline, or rate-limited.
+            Task { await reverseGeocode(location) }
         }
 
         let state = LocusActivityAttributes.ContentState(
             status: status,
             coordinate: String(format: "%.4f, %.4f", coordinate.latitude, coordinate.longitude),
+            distance: Self.formatDistance(distanceTraveled),
+            elapsed: Self.formatElapsedTime(elapsedTime),
             city: city,
             country: country
         )
@@ -102,6 +112,24 @@ actor LocusLiveActivityController {
             city = "未知城市"
             country = "未知国家"
         }
+    }
+
+    private static func formatDistance(_ meters: CLLocationDistance) -> String {
+        if meters < 1_000 {
+            return "\(Int(max(0, meters).rounded())) 米"
+        }
+        return String(format: "%.2f km", meters / 1_000)
+    }
+
+    private static func formatElapsedTime(_ interval: TimeInterval) -> String {
+        let seconds = max(0, Int(interval.rounded()))
+        let hours = seconds / 3_600
+        let minutes = (seconds % 3_600) / 60
+        let remainingSeconds = seconds % 60
+        if hours > 0 {
+            return String(format: "%d:%02d:%02d", hours, minutes, remainingSeconds)
+        }
+        return String(format: "%02d:%02d", minutes, remainingSeconds)
     }
 
     private func end() async {

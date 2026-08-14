@@ -5,8 +5,8 @@ import UIKit
 enum MapChromeLayout {
     static let horizontalPadding: CGFloat = 16
     static let spacing: CGFloat = 10
-    static let primaryHeight: CGFloat = 72
-    static let rightColumnWidth: CGFloat = 72
+    static let primaryHeight: CGFloat = 56
+    static let rightColumnWidth: CGFloat = 56
     static let bottomPadding: CGFloat = 8
     static let rightRailClearance = bottomPadding + primaryHeight + spacing
 }
@@ -286,7 +286,9 @@ struct StatusBarView: View {
             await LocusLiveActivityController.shared.sync(
                 isActive: isActive,
                 status: status,
-                coordinate: coordinate
+                coordinate: coordinate,
+                distanceTraveled: session.routeDistanceTraveled,
+                elapsedTime: session.routeElapsedTime
             )
         }
     }
@@ -357,7 +359,7 @@ struct BottomControlsView: View {
                     .transition(.opacity)
                 }
         }
-        .padding(14)
+        .padding(6)
         .locusGlass(.regular, in: trayShape)
         .contentShape(trayShape)
         .frame(maxWidth: .infinity, alignment: .trailing)

@@ -29,6 +29,14 @@ jobs:
             CODE_SIGN_IDENTITY='' \
             DEVELOPMENT_TEAM='' \
             clean build | tee build/xcodebuild.log
+      - name: Verify Live Activity packaging
+        run: |
+          set -euo pipefail
+          APP="$PWD/build/DerivedData/Build/Products/Release-iphoneos/Locus.app"
+          EXTENSION="$APP/PlugIns/LocusLiveActivity.appex"
+          test -d "$EXTENSION"
+          test "$(/usr/libexec/PlistBuddy -c 'Print :NSSupportsLiveActivities' "$APP/Info.plist")" = "true"
+          test "$(/usr/libexec/PlistBuddy -c 'Print :NSSupportsLiveActivities' "$EXTENSION/Info.plist")" = "true"
       - name: Package IPA
         run: |
           set -euo pipefail

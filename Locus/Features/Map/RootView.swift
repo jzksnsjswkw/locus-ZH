@@ -490,13 +490,9 @@ private final class MapLocationSummary: ObservableObject {
                     preferredLocale: Locale(identifier: "zh_Hans_CN")
                 ).first
                 guard !Task.isCancelled else { return }
-                self.country = placemark?.country?.trimmingCharacters(in: .whitespacesAndNewlines)
-                    .flatMap { $0.isEmpty ? nil : $0 } ?? "未知国家"
-                self.city = (placemark?.locality ?? placemark?.administrativeArea)?
-                    .trimmingCharacters(in: .whitespacesAndNewlines)
-                    .flatMap { $0.isEmpty ? nil : $0 } ?? "未知城市"
-                self.postalCode = placemark?.postalCode?.trimmingCharacters(in: .whitespacesAndNewlines)
-                    .flatMap { $0.isEmpty ? nil : $0 } ?? "—"
+                self.country = self.nonEmpty(placemark?.country) ?? "未知国家"
+                self.city = self.nonEmpty(placemark?.locality ?? placemark?.administrativeArea) ?? "未知城市"
+                self.postalCode = self.nonEmpty(placemark?.postalCode) ?? "—"
                 if let postalAddress = placemark?.postalAddress {
                     self.formattedAddress = CNPostalAddressFormatter
                         .string(from: postalAddress, style: .mailingAddress)
@@ -522,6 +518,12 @@ private final class MapLocationSummary: ObservableObject {
                 self.formattedAddress = "无法获取地址"
             }
         }
+    }
+
+    private func nonEmpty(_ value: String?) -> String? {
+        guard let trimmed = value?.trimmingCharacters(in: .whitespacesAndNewlines),
+              !trimmed.isEmpty else { return nil }
+        return trimmed
     }
 }
 

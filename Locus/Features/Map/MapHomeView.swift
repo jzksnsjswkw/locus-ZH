@@ -6,8 +6,11 @@ struct MapHomeView: View {
     @EnvironmentObject private var pairing: PairingStore
     @Binding var showPlaces: Bool
     @Binding var favoriteRenameSuggestion: SavedPlace?
+    @Binding var searchPresented: Bool
+    @Binding var showTravelModes: Bool
 
     @StateObject private var search = PlaceSearchCompleter()
+    @Namespace private var rightLowerControlNamespace
     @State private var position: MapCameraPosition = .userLocation(fallback: .automatic)
     @State private var searchText = ""
     @FocusState private var searchFocused: Bool
@@ -56,6 +59,7 @@ struct MapHomeView: View {
                             FavoriteMapMarker(
                                 selected: selectedFavoriteID == favorite.id,
                                 onSelect: {
+                                    showTravelModes = false
                                     selectedFavoriteID = favorite.id
                                     pinSelected = false
                                     pinExpandedActions = false
@@ -78,6 +82,7 @@ struct MapHomeView: View {
                                 isDragging: isDraggingPin,
                                 onSelect: {
                                     searchFocused = false
+                                    showTravelModes = false
                                     suppressNextMapTap = true
                                     selectedFavoriteID = nil
                                     withAnimation(.spring(response: 0.28, dampingFraction: 0.78)) {
@@ -90,6 +95,7 @@ struct MapHomeView: View {
                                 },
                                 onShowExpandedActions: {
                                     searchFocused = false
+                                    showTravelModes = false
                                     suppressNextMapTap = true
                                     selectedFavoriteID = nil
                                     withAnimation(.spring(response: 0.28, dampingFraction: 0.78)) {
@@ -101,6 +107,7 @@ struct MapHomeView: View {
                                     }
                                 },
                                 onRemove: {
+                                    showTravelModes = false
                                     suppressNextMapTap = true
                                     withAnimation {
                                         session.pin = nil
@@ -114,6 +121,7 @@ struct MapHomeView: View {
                                 onBuildRouteToPin: buildRouteToCurrentPin,
                                 onDragBegan: {
                                     searchFocused = false
+                                    showTravelModes = false
                                     suppressNextMapTap = true
                                     pinPlaceName = nil
                                     pinSelected = false
@@ -158,11 +166,18 @@ struct MapHomeView: View {
                 .mapStyle(mapStyle)
                 .mapControlVisibility(.hidden)
                 .onMapCameraChange(frequency: .continuous) { _ in
+                    if showTravelModes {
+                        withAnimation(.easeOut(duration: 0.16)) {
+                            showTravelModes = false
+                        }
+                    }
                     guard session.mapStyleIndex != 0, routeCoords.count > 1 else { return }
                     routeCameraRevision &+= 1
                 }
                 .onTapGesture { point in
                     searchFocused = false
+                    searchPresented = false
+                    showTravelModes = false
                     guard !suppressNextMapTap, !isDraggingPin else { return }
                     pinSelected = false
                     pinExpandedActions = false
@@ -183,19 +198,52 @@ struct MapHomeView: View {
 
             topChrome
 
-            if !session.joystickActive {
+            if !searchPresented {
                 VStack {
                     Spacer()
                     HStack {
                         Spacer()
-                        rightLowerControls
+                        rightLowerDynamicControl
                     }
                     .padding(.trailing, 16)
                     .padding(.bottom, bottomControlClearance)
                 }
                 .allowsHitTesting(true)
-                .transition(.move(edge: .trailing).combined(with: .opacity))
+                .animation(.spring(response: 0.32, dampingFraction: 0.84), value: session.routeActive)
+                .animation(.spring(response: 0.32, dampingFraction: 0.84), value: session.routePaused)
                 .zIndex(2)
+            }
+
+            if routeCoords.count > 1,
+               !session.routeActive,
+               !session.routePaused,
+               !searchPresented {
+                VStack {
+                    Spacer()
+                    routeReadyActions
+                        .frame(maxWidth: 250)
+                        .padding(.bottom, routeActionBottomClearance)
+                }
+                .animation(.spring(response: 0.32, dampingFraction: 0.84), value: session.routeActive)
+                .animation(.spring(response: 0.32, dampingFraction: 0.84), value: session.routePaused)
+                .animation(.spring(response: 0.38, dampingFraction: 0.78), value: session.joystickActive)
+                .animation(.easeOut(duration: 0.18), value: favoriteRenameSuggestion?.id)
+                .transition(.move(edge: .bottom).combined(with: .opacity))
+                .zIndex(2)
+            }
+
+            if searchPresented {
+                VStack(spacing: 8) {
+                    Spacer(minLength: 0)
+                    if !searchText.isEmpty && !search.results.isEmpty {
+                        searchResults
+                    }
+                    searchBar
+                }
+                .padding(.horizontal, 16)
+                .padding(.bottom, 8)
+                .transition(.move(edge: .bottom).combined(with: .opacity))
+                .zIndex(4)
             }
 
             if let favoriteToast {
@@ -218,6 +266,15 @@ struct MapHomeView: View {
             favoriteToastTask = nil
             favoriteToast = nil
         }
+        .onChange(of: searchPresented) { _, presented in
+            if presented {
+                DispatchQueue.main.async {
+                    searchFocused = true
+                }
+            } else {
+                searchFocused = false
+            }
+        }
         .onChange(of: session.pin?.latitude) { _, newValue in
             if newValue == nil {
                 pinSelected = false
@@ -227,6 +284,9 @@ struct MapHomeView: View {
         .onReceive(NotificationCenter.default.publisher(for: .locusImportGPX)) { note in
             guard let url = note.object as? URL else { return }
             importGPX(url)
+        }
+        .onReceive(NotificationCenter.default.publisher(for: .locusDeleteRoute)) { _ in
+            deleteGeneratedRoute()
         }
         .fileImporter(isPresented: $showGPXImporter, allowedContentTypes: [.xml, .data], allowsMultipleSelection: false) { result in
             if case .success(let urls) = result, let url = urls.first {
@@ -260,22 +320,16 @@ struct MapHomeView: View {
     }
 
     private var topChrome: some View {
-        VStack(spacing: 10) {
-            searchBar
-
-            if !searchText.isEmpty && !search.results.isEmpty {
-                searchResults
-            }
-
-            HStack(alignment: .top, spacing: 8) {
-                StatusBarView()
-                Spacer(minLength: 0)
-                mapChromeButtons
-            }
+        HStack(alignment: .top, spacing: 8) {
+            StatusBarView()
+            Spacer(minLength: 0)
+            mapChromeButtons
         }
         .padding(.horizontal, 16)
         .padding(.bottom, 2)
-        .safeAreaPadding(.top, 8)
+        .simultaneousGesture(TapGesture().onEnded {
+            showTravelModes = false
+        })
     }
 
     private var searchBar: some View {
@@ -298,17 +352,18 @@ struct MapHomeView: View {
                 Button {
                     searchText = ""
                     search.query = ""
-                    searchFocused = false
+                    searchFocused = true
                 } label: {
                     Image(systemName: "xmark.circle.fill")
                         .foregroundStyle(.secondary)
                 }
                 .buttonStyle(.plain)
-                .accessibilityLabel("清除搜索并收起键盘")
+                .accessibilityLabel("清除搜索内容")
             }
-            if searchFocused {
+            if searchPresented {
                 Button("完成") {
                     searchFocused = false
+                    searchPresented = false
                 }
                 .font(.subheadline.weight(.semibold))
                 .buttonStyle(.plain)
@@ -321,28 +376,32 @@ struct MapHomeView: View {
     }
 
     private var searchResults: some View {
-        VStack(alignment: .leading, spacing: 0) {
-            ForEach(search.results.prefix(5), id: \.self) { item in
-                Button {
-                    select(completion: item)
-                } label: {
-                    VStack(alignment: .leading, spacing: 2) {
-                        Text(item.title).font(.subheadline.weight(.semibold)).foregroundStyle(.primary)
-                        if !item.subtitle.isEmpty {
-                            Text(item.subtitle).font(.caption).foregroundStyle(.secondary)
+        ScrollView {
+            VStack(alignment: .leading, spacing: 0) {
+                ForEach(search.results.prefix(5), id: \.self) { item in
+                    Button {
+                        select(completion: item)
+                    } label: {
+                        VStack(alignment: .leading, spacing: 2) {
+                            Text(item.title).font(.subheadline.weight(.semibold)).foregroundStyle(.primary)
+                            if !item.subtitle.isEmpty {
+                                Text(item.subtitle).font(.caption).foregroundStyle(.secondary)
+                            }
                         }
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                        .padding(.horizontal, 12)
+                        .padding(.vertical, 10)
+                        .contentShape(Rectangle())
                     }
-                    .frame(maxWidth: .infinity, alignment: .leading)
-                    .padding(.horizontal, 12)
-                    .padding(.vertical, 10)
-                    .contentShape(Rectangle())
+                    .buttonStyle(.plain)
+                    Divider().opacity(0.3)
                 }
-                .buttonStyle(.plain)
-                Divider().opacity(0.3)
             }
         }
+        .scrollIndicators(.hidden)
         .locusGlass(.regular, in: RoundedRectangle(cornerRadius: 16, style: .continuous))
         .contentShape(RoundedRectangle(cornerRadius: 16, style: .continuous))
+        .frame(maxHeight: 280)
     }
 
     private var mapChromeButtons: some View {
@@ -370,9 +429,29 @@ struct MapHomeView: View {
         .contentShape(Capsule())
     }
 
+    private var rightLowerDynamicControl: some View {
+        ZStack(alignment: .bottomTrailing) {
+            if session.joystickActive {
+                JoystickPad { vector in
+                    session.updateJoystick(vector: vector)
+                }
+                .frame(width: 148, height: 148)
+                .matchedGeometryEffect(id: "rightLowerControl", in: rightLowerControlNamespace)
+                .transition(.scale(scale: 0.55, anchor: .bottomTrailing).combined(with: .opacity))
+            } else {
+                rightLowerControls
+                    .matchedGeometryEffect(id: "rightLowerControl", in: rightLowerControlNamespace)
+                    .transition(.scale(scale: 0.55, anchor: .bottomTrailing).combined(with: .opacity))
+            }
+        }
+        .frame(width: 148, height: 148, alignment: .bottomTrailing)
+        .animation(.spring(response: 0.38, dampingFraction: 0.78), value: session.joystickActive)
+    }
+
     private var rightLowerControls: some View {
         VStack(spacing: 0) {
             Button {
+                showTravelModes = false
                 toggleCurrentFavorite()
             } label: {
                 Image(systemName: currentPinIsFavorite ? "star.fill" : "star")
@@ -390,6 +469,7 @@ struct MapHomeView: View {
 
             Button {
                 searchFocused = false
+                showTravelModes = false
                 goToCurrentLocation()
             } label: {
                 Image(systemName: "location.fill")
@@ -405,8 +485,45 @@ struct MapHomeView: View {
         .foregroundStyle(.primary)
     }
 
+    private var routeReadyActions: some View {
+        HStack(spacing: 6) {
+            routeActionButton("删除", systemImage: "trash.fill", color: LocusTheme.danger) {
+                deleteGeneratedRoute()
+            }
+            routeActionButton("运行", systemImage: "play.fill", color: .blue) {
+                runGeneratedRoute()
+            }
+        }
+        .padding(5)
+        .locusGlass(.regular, in: Capsule())
+        .contentShape(Capsule())
+    }
+
+    private func routeActionButton(
+        _ title: String,
+        systemImage: String,
+        color: Color,
+        action: @escaping () -> Void
+    ) -> some View {
+        Button(action: action) {
+            Label(title, systemImage: systemImage)
+                .font(.subheadline.weight(.bold))
+                .foregroundStyle(color)
+                .frame(maxWidth: .infinity)
+                .frame(height: 44)
+                .contentShape(Capsule())
+        }
+        .buttonStyle(.plain)
+    }
+
     private var bottomControlClearance: CGFloat {
         session.routeActive || session.routePaused ? 174 : 96
+    }
+
+    private var routeActionBottomClearance: CGFloat {
+        bottomControlClearance
+            + (session.joystickActive ? 156 : 0)
+            + (favoriteRenameSuggestion == nil ? 0 : 52)
     }
 
     private var currentPinIsFavorite: Bool {
@@ -445,7 +562,10 @@ struct MapHomeView: View {
     }
 
     private func chromeIconButton(_ systemName: String, action: @escaping () -> Void) -> some View {
-        Button(action: action) {
+        Button {
+            showTravelModes = false
+            action()
+        } label: {
             Image(systemName: systemName)
                 .font(.body.weight(.semibold))
                 .frame(width: 44, height: 44)
@@ -564,6 +684,8 @@ struct MapHomeView: View {
                     position = .region(MKCoordinateRegion(center: coord, latitudinalMeters: 1200, longitudinalMeters: 1200))
                     searchText = ""
                     search.query = ""
+                    searchFocused = false
+                    searchPresented = false
                     session.pushNamedRecent(name: item.name ?? query, coordinate: coord)
                 }
             } else {
@@ -586,6 +708,7 @@ struct MapHomeView: View {
                     searchText = ""
                     search.query = ""
                     searchFocused = false
+                    searchPresented = false
                     session.pushNamedRecent(name: title, coordinate: coord)
                 }
             }
@@ -625,6 +748,28 @@ struct MapHomeView: View {
         }
         showRouteSheet = false
         session.followRoute(path, pairing: pairing)
+    }
+
+    private func runGeneratedRoute() {
+        showTravelModes = false
+        if session.canResumeRoute {
+            session.resumeRoute(pairing: pairing)
+        } else {
+            playRoute()
+        }
+    }
+
+    private func deleteGeneratedRoute() {
+        showTravelModes = false
+        session.discardRoute()
+        withAnimation(.easeOut(duration: 0.2)) {
+            routeCoords.removeAll()
+            drawnPath.removeAll()
+            routeStart = nil
+            routeEnd = nil
+        }
+        UINotificationFeedbackGenerator().notificationOccurred(.success)
+        showFavoriteToast("轨迹已删除")
     }
 
     private func importGPX(_ url: URL) {

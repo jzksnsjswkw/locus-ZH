@@ -11,6 +11,8 @@ struct RootView: View {
     @State private var favoriteToRename: SavedPlace?
     @State private var favoriteRenameText = ""
     @State private var favoriteRenameTask: Task<Void, Never>?
+    @State private var searchPresented = false
+    @State private var showTravelModes = false
 
     var body: some View {
         // Bottom chrome is a sibling overlay aligned to the bottom — no full-screen
@@ -18,17 +20,29 @@ struct RootView: View {
         ZStack(alignment: .bottom) {
             MapHomeView(
                 showPlaces: $showPlaces,
-                favoriteRenameSuggestion: $favoriteRenameSuggestion
+                favoriteRenameSuggestion: $favoriteRenameSuggestion,
+                searchPresented: $searchPresented,
+                showTravelModes: $showTravelModes
             )
 
             VStack(spacing: 10) {
-                if let favoriteRenameSuggestion {
+                if let favoriteRenameSuggestion, !searchPresented {
                     renameSuggestionButton(favoriteRenameSuggestion)
                         .frame(maxWidth: .infinity, alignment: .center)
                         .transition(.move(edge: .bottom).combined(with: .opacity))
                 }
 
-                BottomControlsView(showSettings: $showSettings)
+                if !searchPresented {
+                    HStack(alignment: .bottom, spacing: 10) {
+                        BottomControlsView(
+                            showSettings: $showSettings,
+                            showTravelModes: $showTravelModes
+                        )
+
+                        searchButton
+                    }
+                    .transition(.move(edge: .bottom).combined(with: .opacity))
+                }
             }
             .padding(.horizontal, 16)
             .padding(.bottom, 8)
@@ -78,11 +92,13 @@ struct RootView: View {
         .onDisappear {
             favoriteRenameTask?.cancel()
         }
+        .animation(.spring(response: 0.32, dampingFraction: 0.84), value: searchPresented)
     }
 
     private func renameSuggestionButton(_ favorite: SavedPlace) -> some View {
         Button {
             favoriteRenameTask?.cancel()
+            showTravelModes = false
             let current = session.favorites.first(where: { $0.id == favorite.id }) ?? favorite
             favoriteRenameText = session.favoriteDisplayName(current)
             favoriteToRename = current
@@ -100,6 +116,24 @@ struct RootView: View {
         .buttonStyle(.plain)
         .locusGlass(.interactive, in: Capsule())
         .accessibilityHint("两秒内轻点即可自定义收藏名称")
+    }
+
+    private var searchButton: some View {
+        Button {
+            withAnimation(.spring(response: 0.32, dampingFraction: 0.84)) {
+                showTravelModes = false
+                searchPresented = true
+            }
+        } label: {
+            Image(systemName: "magnifyingglass")
+                .font(.title3.weight(.semibold))
+                .frame(width: 52, height: 52)
+                .contentShape(Circle())
+        }
+        .buttonStyle(.plain)
+        .locusGlass(.interactive, in: Circle())
+        .foregroundStyle(.primary)
+        .accessibilityLabel("搜索地点")
     }
 }
 
@@ -165,12 +199,22 @@ struct StatusBarView: View {
                 statusContent
             }
         }
-        .onAppear { refreshTunnel() }
+        .onAppear {
+            refreshTunnel()
+            syncLiveActivity()
+        }
         .onChange(of: scenePhase) { _, phase in
             if phase == .active { refreshTunnel() }
         }
         .onChange(of: session.status) { _, _ in
             refreshTunnel()
+            syncLiveActivity()
+        }
+        .onChange(of: session.simulated?.latitude) { _, _ in
+            syncLiveActivity()
+        }
+        .onChange(of: session.simulated?.longitude) { _, _ in
+            syncLiveActivity()
         }
         .onReceive(NotificationCenter.default.publisher(for: .NEVPNStatusDidChange)) { _ in
             // LocalDevVPN connection changes show up here even though we don’t own the VPN.
@@ -221,31 +265,38 @@ struct StatusBarView: View {
     private func refreshTunnel() {
         tunnelConnected = LocalDevVPN.isConnected
     }
+
+    private func syncLiveActivity() {
+        let isActive = session.isSpoofing
+        let status = title
+        let coordinate = session.simulated
+        Task {
+            await LocusLiveActivityController.shared.sync(
+                isActive: isActive,
+                status: status,
+                coordinate: coordinate
+            )
+        }
+    }
 }
 
 struct BottomControlsView: View {
     @EnvironmentObject private var session: SpoofSession
     @EnvironmentObject private var pairing: PairingStore
     @Binding var showSettings: Bool
-    @State private var showTravelModes = false
+    @Binding var showTravelModes: Bool
 
     private let trayShape = RoundedRectangle(cornerRadius: 28, style: .continuous)
 
     var body: some View {
-        VStack(alignment: .trailing, spacing: 12) {
-            if session.joystickActive {
-                JoystickPad { vector in
-                    session.updateJoystick(vector: vector)
-                }
-                .frame(width: 148, height: 148)
-                .frame(maxWidth: .infinity, alignment: .trailing)
-            }
-
-            VStack(spacing: 12) {
+        VStack(spacing: 12) {
                 if session.routeActive || session.routePaused {
                     VStack(spacing: 8) {
                         HStack(spacing: 10) {
-                            Button { session.adjustSpeed(by: -0.25) } label: {
+                            Button {
+                                showTravelModes = false
+                                session.adjustSpeed(by: -0.25)
+                            } label: {
                                 Label("减速", systemImage: "minus.circle.fill")
                             }
                             .disabled(session.speedMultiplier <= 0.25)
@@ -261,7 +312,10 @@ struct BottomControlsView: View {
                             }
                             Spacer()
 
-                            Button { session.adjustSpeed(by: 0.25) } label: {
+                            Button {
+                                showTravelModes = false
+                                session.adjustSpeed(by: 0.25)
+                            } label: {
                                 Label("加速", systemImage: "plus.circle.fill")
                             }
                             .disabled(session.speedMultiplier >= 4.0)
@@ -282,16 +336,18 @@ struct BottomControlsView: View {
                         trayIcon("gearshape.fill") { showSettings = true }
                         travelModeButton
                         joystickButton
-                        sessionControl
+                        if session.canResumeRoute {
+                            pausedRouteControls
+                        } else {
+                            sessionControl
+                        }
                     }
                     .transition(.opacity)
                 }
-            }
-            .padding(14)
-            .locusGlass(.regular, in: trayShape)
-            // Only the fixed controls participate in the glass tray's layout.
-            .contentShape(trayShape)
         }
+        .padding(14)
+        .locusGlass(.regular, in: trayShape)
+        .contentShape(trayShape)
         .frame(maxWidth: .infinity, alignment: .trailing)
         .animation(.easeOut(duration: 0.18), value: session.joystickActive)
         .animation(.spring(response: 0.28, dampingFraction: 0.82), value: showTravelModes)
@@ -338,6 +394,7 @@ struct BottomControlsView: View {
 
     private var joystickButton: some View {
         Button {
+            showTravelModes = false
             if session.joystickActive {
                 session.stopJoystick()
             } else {
@@ -356,7 +413,10 @@ struct BottomControlsView: View {
     }
 
     private var sessionControl: some View {
-        Button(action: performSessionAction) {
+        Button {
+            showTravelModes = false
+            performSessionAction()
+        } label: {
             HStack(spacing: 6) {
                 if session.canResumeRoute {
                     Image(systemName: "play.fill")
@@ -387,6 +447,37 @@ struct BottomControlsView: View {
         .accessibilityHint(session.canResumeRoute ? "轻点继续轨迹；长按可停止定位" : "")
     }
 
+    private var pausedRouteControls: some View {
+        HStack(spacing: 6) {
+            Button {
+                showTravelModes = false
+                NotificationCenter.default.post(name: .locusDeleteRoute, object: nil)
+            } label: {
+                Text("结束")
+                    .font(.subheadline.weight(.bold))
+                    .foregroundStyle(.white)
+                    .frame(maxWidth: .infinity)
+                    .frame(height: 44)
+                    .background(Capsule().fill(LocusTheme.danger))
+            }
+            .buttonStyle(.plain)
+
+            Button {
+                showTravelModes = false
+                session.resumeRoute(pairing: pairing)
+            } label: {
+                Text("继续")
+                    .font(.subheadline.weight(.bold))
+                    .foregroundStyle(.black)
+                    .frame(maxWidth: .infinity)
+                    .frame(height: 44)
+                    .background(Capsule().fill(LocusTheme.accent))
+            }
+            .buttonStyle(.plain)
+        }
+        .frame(maxWidth: .infinity)
+    }
+
     private var sessionControlTitle: String {
         if session.canResumeRoute { return "继续轨迹" }
         if session.isSpoofing { return session.isMoving ? "暂停" : "停止定位" }
@@ -412,7 +503,10 @@ struct BottomControlsView: View {
     }
 
     private func trayIcon(_ systemName: String, action: @escaping () -> Void) -> some View {
-        Button(action: action) {
+        Button {
+            showTravelModes = false
+            action()
+        } label: {
             Image(systemName: systemName)
                 .font(.body.weight(.semibold))
                 .foregroundStyle(.primary)

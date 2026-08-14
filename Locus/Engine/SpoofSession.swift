@@ -239,6 +239,17 @@ final class SpoofSession: ObservableObject {
         joystickTimer = nil
     }
 
+    func discardRoute() {
+        routeGeneration = UUID()
+        routeTask?.cancel()
+        routeTask = nil
+        routeActive = false
+        routePaused = false
+        activeRoute.removeAll()
+        routeProgress = 0
+        routeLap = 0
+    }
+
     func followRoute(_ coordinates: [CLLocationCoordinate2D], pairing: PairingStore) {
         guard pairing.hasPairingFile, coordinates.count >= 2 else { return }
         activeRoute = coordinates

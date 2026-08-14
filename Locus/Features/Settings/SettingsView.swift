@@ -11,6 +11,7 @@ struct SettingsView: View {
     @State private var showNameEasterEgg = false
     @State private var tunnelIP = TunnelConfig.targetIP
     @State private var localDevVPNInstalled = LocalDevVPN.isInstalled
+    @AppStorage("locus.liveActivityEnabled") private var liveActivityEnabled = true
     @Environment(\.scenePhase) private var scenePhase
 
     private var supportsOnDevicePairing: Bool {
@@ -96,6 +97,17 @@ struct SettingsView: View {
                     Text("开始模拟定位前请连接 LocalDevVPN。默认隧道 IP 为 10.7.0.1。首次模拟定位请使用 Wi‑Fi，之后可继续通过蜂窝网络运行。")
                 }
 
+                Section {
+                    Toggle(isOn: $liveActivityEnabled) {
+                        Label("灵动岛实时状态", systemImage: "waveform.path.ecg.rectangle")
+                    }
+                    .tint(LocusTheme.accent)
+                } header: {
+                    Text("实时状态")
+                } footer: {
+                    Text("模拟定位时在灵动岛和锁定屏幕显示状态、坐标与所在地区，每 10 秒更新一次。")
+                }
+
                 Section("隐私") {
                     Text("所有数据均在设备端处理。收藏和最近使用记录保存在 UserDefaults 中；无分析统计、无需账户，也不会上传任何内容。")
                         .font(.footnote)
@@ -162,6 +174,15 @@ struct SettingsView: View {
             .onChange(of: scenePhase) { _, phase in
                 if phase == .active {
                     localDevVPNInstalled = LocalDevVPN.isInstalled
+                }
+            }
+            .onChange(of: liveActivityEnabled) { _, enabled in
+                Task {
+                    await LocusLiveActivityController.shared.sync(
+                        isActive: enabled && session.isSpoofing,
+                        status: session.status.label,
+                        coordinate: session.simulated
+                    )
                 }
             }
         }

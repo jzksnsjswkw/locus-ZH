@@ -60,3 +60,25 @@ targets:
         ENABLE_BITCODE: NO
         SUPPORTS_MACCATALYST: NO
         SWIFT_OBJC_BRIDGING_HEADER: ""
+    dependencies:
+      - target: LocusLiveActivity
+        embed: true
+  LocusLiveActivity:
+    type: app-extension
+    platform: iOS
+    sources:
+      - path: LocusLiveActivity
+        excludes:
+          - "**/Info.plist"
+      - path: Locus/Support/LocusActivityAttributes.swift
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: com.chrismack.locus.liveactivity
+        PRODUCT_NAME: LocusLiveActivity
+        MARKETING_VERSION: "1.0.2"
+        CURRENT_PROJECT_VERSION: "3"
+        INFOPLIST_FILE: LocusLiveActivity/Info.plist
+        GENERATE_INFOPLIST_FILE: false
+        APPLICATION_EXTENSION_API_ONLY: YES
+        SKIP_INSTALL: YES
+        LD_RUNPATH_SEARCH_PATHS: "$(inherited) @executable_path/../../Frameworks"

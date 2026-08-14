@@ -39,6 +39,13 @@ struct LocusApp: App {
     }
 
     private func handleIncoming(_ url: URL) {
+        if url.scheme == "locus", url.host == "stop" {
+            session.stopJoystick()
+            session.discardRoute()
+            session.stop(pairing: pairing)
+            return
+        }
+
         let ext = url.pathExtension.lowercased()
         if ["plist", "mobiledevicepairing", "mobiledevicepair"].contains(ext) {
             try? pairing.importPairing(from: url)
@@ -50,4 +57,5 @@ struct LocusApp: App {
 
 extension Notification.Name {
     static let locusImportGPX = Notification.Name("locusImportGPX")
+    static let locusDeleteRoute = Notification.Name("locusDeleteRoute")
 }

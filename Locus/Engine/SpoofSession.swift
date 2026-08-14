@@ -320,7 +320,7 @@ final class SpoofSession: ObservableObject {
 
     func favoriteDisplayName(_ place: SavedPlace) -> String {
         if place.nameIsUserEdited == true { return place.name }
-        Self.isGenericFavoriteName(place.name) ? "收藏地点" : place.name
+        return Self.isGenericFavoriteName(place.name) ? "收藏地点" : place.name
     }
 
     @discardableResult

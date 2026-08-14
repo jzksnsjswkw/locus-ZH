@@ -1,4 +1,3 @@
-import ActivityKit
 import SwiftUI
 import UniformTypeIdentifiers
 
@@ -12,8 +11,6 @@ struct SettingsView: View {
     @State private var showNameEasterEgg = false
     @State private var tunnelIP = TunnelConfig.targetIP
     @State private var localDevVPNInstalled = LocalDevVPN.isInstalled
-    @AppStorage("locus.liveActivityEnabled") private var liveActivityEnabled = true
-    @AppStorage(LocusLiveActivityController.statusKey) private var liveActivityStatus = "尚未启动"
     @Environment(\.scenePhase) private var scenePhase
 
     private var supportsOnDevicePairing: Bool {
@@ -25,17 +22,6 @@ struct SettingsView: View {
         let short = Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String ?? "—"
         let build = Bundle.main.infoDictionary?["CFBundleVersion"] as? String ?? ""
         return build.isEmpty ? short : "\(short) (\(build))"
-    }
-
-    private var liveActivityExtensionIncluded: Bool {
-        guard let plugInsURL = Bundle.main.builtInPlugInsURL else { return false }
-        return FileManager.default.fileExists(
-            atPath: plugInsURL.appendingPathComponent("LocusLiveActivity.appex").path
-        )
-    }
-
-    private var liveActivityDeclaredByMainApp: Bool {
-        Bundle.main.object(forInfoDictionaryKey: "NSSupportsLiveActivities") as? Bool == true
     }
 
     private var displayedCoordinate: String {
@@ -117,39 +103,8 @@ struct SettingsView: View {
                     Text("开始模拟定位前请连接 LocalDevVPN。默认隧道 IP 为 10.7.0.1。首次模拟定位请使用 Wi‑Fi，之后可继续通过蜂窝网络运行。")
                 }
 
-                Section {
-                    Toggle(isOn: $liveActivityEnabled) {
-                        Label("灵动岛实时状态", systemImage: "waveform.path.ecg.rectangle")
-                    }
-                    .tint(LocusTheme.accent)
-
-                    LabeledContent(
-                        "系统权限",
-                        value: ActivityAuthorizationInfo().areActivitiesEnabled ? "已允许" : "未允许"
-                    )
-                    LabeledContent(
-                        "扩展文件",
-                        value: liveActivityExtensionIncluded ? "已包含" : "缺失"
-                    )
-                    LabeledContent(
-                        "主应用声明",
-                        value: liveActivityDeclaredByMainApp ? "已包含" : "缺失"
-                    )
-                    LabeledContent("运行状态") {
-                        Text(liveActivityStatus)
-                            .font(.footnote)
-                            .foregroundStyle(liveActivityStatus == "运行中" ? LocusTheme.statusGood : .secondary)
-                            .lineLimit(3)
-                            .multilineTextAlignment(.trailing)
-                    }
-                } header: {
-                    Text("实时状态")
-                } footer: {
-                    Text("模拟定位时在灵动岛和锁定屏幕优先显示轨迹已行驶里程与实际运行时间，所在地区作为辅助信息，每 10 秒更新一次。轨迹运行或暂停期间不重新查询地区。独立安装可注册实时活动扩展；标准 LiveContainer 目前不会为客体 App 注册自定义 App Extension，因此即使 IPA 已包含声明与扩展文件，系统仍可能拒绝启动。")
-                }
-
                 Section("隐私") {
-                    Text("所有数据均在设备端处理。收藏和最近使用记录保存在 UserDefaults 中；无分析统计、无需账户，也不会上传任何内容。")
+                    Text("所有数据均在设备端处理。收藏数据保存在 UserDefaults 中；无分析统计、无需账户，也不会上传任何内容。")
                         .font(.footnote)
                         .foregroundStyle(.secondary)
                 }
@@ -218,6 +173,7 @@ struct SettingsView: View {
             .sheet(isPresented: $showPairOnDevice) {
                 PairOnDeviceView()
                     .environmentObject(pairing)
+                    .presentationDetents([.medium, .large])
             }
             .fullScreenCover(isPresented: $showNameEasterEgg) {
                 LocusEasterEggView()
@@ -228,18 +184,6 @@ struct SettingsView: View {
             .onChange(of: scenePhase) { _, phase in
                 if phase == .active {
                     localDevVPNInstalled = LocalDevVPN.isInstalled
-                }
-            }
-            .onChange(of: liveActivityEnabled) { _, enabled in
-                Task {
-                    await LocusLiveActivityController.shared.sync(
-                        isActive: enabled && session.isSpoofing,
-                        status: session.status.label,
-                        coordinate: session.simulated,
-                        distanceTraveled: session.routeDistanceTraveled,
-                        elapsedTime: session.routeElapsedTime,
-                        allowRegionLookup: !session.routeActive && !session.routePaused
-                    )
                 }
             }
         }
@@ -291,22 +235,6 @@ struct PlacesView: View {
                     }
                 }
 
-                Section("最近使用") {
-                    if session.recents.isEmpty {
-                        Text("使用过的模拟位置会显示在这里。")
-                            .foregroundStyle(.secondary)
-                    }
-                    ForEach(session.recents) { place in
-                        recentButton(place)
-                            .swipeActions(edge: .trailing, allowsFullSwipe: true) {
-                                Button(role: .destructive) {
-                                    session.removeRecent(place)
-                                } label: {
-                                    Label("删除", systemImage: "trash.fill")
-                                }
-                            }
-                    }
-                }
             }
             .navigationTitle("地点")
             .task {
@@ -340,9 +268,17 @@ struct PlacesView: View {
 
     private var groupedFavorites: [FavoriteGroup] {
         let grouped = Dictionary(grouping: session.favorites) { place in
-            guard let name = place.countryName?.trimmingCharacters(in: .whitespacesAndNewlines),
-                  !name.isEmpty else { return "未知地区" }
-            return name
+            let country = place.countryName?.trimmingCharacters(in: .whitespacesAndNewlines)
+            let city = place.cityName?.trimmingCharacters(in: .whitespacesAndNewlines)
+            let parts = [country, city]
+                .compactMap { value -> String? in
+                    guard let value, !value.isEmpty else { return nil }
+                    return value
+                }
+                .reduce(into: [String]()) { result, value in
+                    if result.last != value { result.append(value) }
+                }
+            return parts.isEmpty ? "未知地区" : parts.joined(separator: " ")
         }
         return grouped.keys
             .sorted { lhs, rhs in
@@ -363,17 +299,4 @@ struct PlacesView: View {
         }
     }
 
-    private func recentButton(_ place: SavedPlace) -> some View {
-        Button {
-            session.teleport(to: place.coordinate, pairing: pairing)
-            dismiss()
-        } label: {
-            VStack(alignment: .leading, spacing: 2) {
-                Text(place.name).foregroundStyle(.primary)
-                Text(String(format: "%.5f, %.5f", place.latitude, place.longitude))
-                    .font(.caption.monospaced())
-                    .foregroundStyle(.secondary)
-            }
-        }
-    }
 }

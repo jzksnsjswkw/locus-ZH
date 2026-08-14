@@ -8,6 +8,7 @@ struct MapHomeView: View {
     @Binding var favoriteRenameSuggestion: SavedPlace?
     @Binding var searchPresented: Bool
     @Binding var showRouteSheet: Bool
+    @Binding var generatedRouteReady: Bool
 
     @StateObject private var search = PlaceSearchCompleter()
     @Namespace private var rightLowerControlNamespace
@@ -240,10 +241,14 @@ struct MapHomeView: View {
         .onAppear {
             session.startLocationUpdates()
         }
+        .onChange(of: routeReadyState, initial: true) { _, ready in
+            generatedRouteReady = ready
+        }
         .onDisappear {
             favoriteToastTask?.cancel()
             favoriteToastTask = nil
             favoriteToast = nil
+            generatedRouteReady = false
         }
         .onChange(of: searchPresented) { _, presented in
             if presented {
@@ -275,31 +280,8 @@ struct MapHomeView: View {
         .onReceive(NotificationCenter.default.publisher(for: .locusDeleteRoute)) { _ in
             deleteGeneratedRoute()
         }
-        .onReceive(NotificationCenter.default.publisher(for: .locusLocateCurrent)) { _ in
-            searchFocused = false
-            goToCurrentLocation()
-        }
-        .overlay(alignment: .bottom) {
-            if routeCoords.count > 1,
-               !session.routeActive,
-               !session.routePaused,
-               !searchPresented {
-                HStack(spacing: MapChromeLayout.spacing) {
-                    routeReadyActions
-                        .frame(maxWidth: 180)
-                        .frame(maxWidth: .infinity)
-
-                    Color.clear
-                        .frame(width: MapChromeLayout.rightColumnWidth)
-                        .allowsHitTesting(false)
-                }
-                .padding(.horizontal, MapChromeLayout.horizontalPadding)
-                .padding(.bottom, routeActionBottomClearance)
-                .animation(.spring(response: 0.32, dampingFraction: 0.84), value: session.routeActive)
-                .animation(.spring(response: 0.32, dampingFraction: 0.84), value: session.routePaused)
-                .animation(.easeOut(duration: 0.18), value: favoriteRenameSuggestion?.id)
-                .transition(.move(edge: .bottom).combined(with: .opacity))
-            }
+        .onReceive(NotificationCenter.default.publisher(for: .locusRunRoute)) { _ in
+            runGeneratedRoute()
         }
         .fileImporter(isPresented: $showGPXImporter, allowedContentTypes: [.xml, .data], allowsMultipleSelection: false) { result in
             if case .success(let urls) = result, let url = urls.first {
@@ -383,7 +365,7 @@ struct MapHomeView: View {
             StatusBarView()
             Spacer(minLength: 0)
             if !searchPresented {
-                mapSearchButton
+                mapTopControls
             }
         }
         .padding(.horizontal, 16)
@@ -408,8 +390,9 @@ struct MapHomeView: View {
     }
 
     private var searchBar: some View {
-        HStack(spacing: 10) {
+        HStack(spacing: 12) {
             Image(systemName: "magnifyingglass")
+                .font(.body.weight(.semibold))
                 .foregroundStyle(.secondary)
             TextField("搜索地点、地址或坐标", text: $searchText)
                 .textInputAutocapitalization(.words)
@@ -436,18 +419,22 @@ struct MapHomeView: View {
                 .accessibilityLabel("清除搜索内容")
             }
             if searchPresented {
-                Button("完成") {
+                Button {
                     searchFocused = false
                     searchPresented = false
+                } label: {
+                    Image(systemName: "chevron.down.circle.fill")
+                        .font(.title3)
                 }
-                .font(.subheadline.weight(.semibold))
                 .buttonStyle(.plain)
-                .foregroundStyle(LocusTheme.accent)
+                .foregroundStyle(.secondary)
+                .accessibilityLabel("收起搜索")
             }
         }
-        .padding(12)
-        .locusGlass(.regular, in: RoundedRectangle(cornerRadius: 16, style: .continuous))
-        .contentShape(RoundedRectangle(cornerRadius: 16, style: .continuous))
+        .padding(.horizontal, 14)
+        .frame(height: 58)
+        .locusGlass(.interactive, in: RoundedRectangle(cornerRadius: 22, style: .continuous))
+        .contentShape(RoundedRectangle(cornerRadius: 22, style: .continuous))
     }
 
     private var searchResults: some View {
@@ -457,15 +444,28 @@ struct MapHomeView: View {
                     Button {
                         select(completion: item)
                     } label: {
-                        VStack(alignment: .leading, spacing: 2) {
-                            Text(item.title).font(.subheadline.weight(.semibold)).foregroundStyle(.primary)
-                            if !item.subtitle.isEmpty {
-                                Text(item.subtitle).font(.caption).foregroundStyle(.secondary)
+                        HStack(spacing: 10) {
+                            Image(systemName: "mappin.circle.fill")
+                                .font(.body)
+                                .foregroundStyle(LocusTheme.accent)
+                            VStack(alignment: .leading, spacing: 2) {
+                                Text(item.title)
+                                    .font(.subheadline.weight(.semibold))
+                                    .foregroundStyle(.primary)
+                                if !item.subtitle.isEmpty {
+                                    Text(item.subtitle)
+                                        .font(.caption)
+                                        .foregroundStyle(.secondary)
+                                }
                             }
+                            Spacer(minLength: 0)
+                            Image(systemName: "arrow.up.left")
+                                .font(.caption.weight(.semibold))
+                                .foregroundStyle(.tertiary)
                         }
                         .frame(maxWidth: .infinity, alignment: .leading)
-                        .padding(.horizontal, 12)
-                        .padding(.vertical, 10)
+                        .padding(.horizontal, 14)
+                        .frame(minHeight: 54)
                         .contentShape(Rectangle())
                     }
                     .buttonStyle(.plain)
@@ -474,24 +474,46 @@ struct MapHomeView: View {
             }
         }
         .scrollIndicators(.hidden)
-        .locusGlass(.regular, in: RoundedRectangle(cornerRadius: 16, style: .continuous))
-        .contentShape(RoundedRectangle(cornerRadius: 16, style: .continuous))
-        .frame(maxHeight: 280)
+        .locusGlass(.regular, in: RoundedRectangle(cornerRadius: 22, style: .continuous))
+        .contentShape(RoundedRectangle(cornerRadius: 22, style: .continuous))
+        .frame(maxHeight: 300)
     }
 
-    private var mapSearchButton: some View {
-        Button {
-            searchPresented = true
-        } label: {
-            Image(systemName: "magnifyingglass")
-                .font(.title2.weight(.semibold))
-                .frame(width: MapChromeLayout.rightColumnWidth, height: MapChromeLayout.primaryHeight)
-                .contentShape(Circle())
+    private var mapTopControls: some View {
+        VStack(spacing: 0) {
+            topControlButton("square.3.layers.3d", label: "切换地图图层") {
+                session.mapStyleIndex = (session.mapStyleIndex + 1) % 3
+            }
+
+            Divider()
+                .overlay(Color.white.opacity(0.22))
+                .frame(width: 32)
+
+            topControlButton("location.fill", label: "回到当前位置") {
+                UISelectionFeedbackGenerator().selectionChanged()
+                searchFocused = false
+                goToCurrentLocation()
+            }
+        }
+        .padding(4)
+        .frame(width: MapChromeLayout.rightColumnWidth)
+        .locusGlass(.clear, in: RoundedRectangle(cornerRadius: 24, style: .continuous))
+        .foregroundStyle(.primary)
+    }
+
+    private func topControlButton(
+        _ systemName: String,
+        label: String,
+        action: @escaping () -> Void
+    ) -> some View {
+        Button(action: action) {
+            Image(systemName: systemName)
+                .font(.body.weight(.semibold))
+                .frame(width: 48, height: 48)
+                .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
-        .locusGlass(.interactive, in: Circle())
-        .foregroundStyle(.primary)
-        .accessibilityLabel("搜索地点")
+        .accessibilityLabel(label)
     }
 
     private var rightLowerDynamicControl: some View {
@@ -509,87 +531,62 @@ struct MapHomeView: View {
                     .transition(.scale(scale: 0.55, anchor: .bottomTrailing).combined(with: .opacity))
             }
         }
-        .frame(width: 172, height: 172, alignment: .bottomTrailing)
+        .frame(width: 148, height: 174, alignment: .bottomTrailing)
         .animation(.spring(response: 0.38, dampingFraction: 0.78), value: session.joystickActive)
     }
 
     private var rightLowerControls: some View {
-        VStack(spacing: 0) {
-            rightRailIconButton("square.3.layers.3d") {
-                session.mapStyleIndex = (session.mapStyleIndex + 1) % 3
+        VStack(spacing: 10) {
+            VStack(spacing: 0) {
+                Button {
+                    toggleCurrentFavorite()
+                } label: {
+                    Image(systemName: currentPinIsFavorite ? "star.fill" : "star")
+                        .font(.body.weight(.semibold))
+                        .frame(width: 48, height: 48)
+                        .contentShape(Rectangle())
+                }
+                .buttonStyle(.plain)
+                .foregroundStyle(currentPinIsFavorite ? Color.yellow : Color.primary)
+                .disabled(session.pin == nil)
+                .accessibilityLabel(currentPinIsFavorite ? "取消收藏" : "添加收藏")
+
+                Divider()
+                    .overlay(Color.white.opacity(0.22))
+                    .frame(width: 32)
+
+                rightRailIconButton("folder.fill") {
+                    searchFocused = false
+                    showPlaces = true
+                }
+                .accessibilityLabel("打开收藏夹")
             }
-            .accessibilityLabel("切换地图图层")
-
-            Divider()
-                .frame(width: 34)
-
-            rightRailIconButton("folder.fill") {
-                searchFocused = false
-                showPlaces = true
-            }
-            .accessibilityLabel("打开收藏夹")
-
-            Divider()
-                .frame(width: 34)
+            .padding(4)
+            .frame(width: MapChromeLayout.rightColumnWidth)
+            .locusGlass(.clear, in: RoundedRectangle(cornerRadius: 24, style: .continuous))
 
             Button {
-                toggleCurrentFavorite()
+                UISelectionFeedbackGenerator().selectionChanged()
+                searchPresented = true
             } label: {
-                Image(systemName: currentPinIsFavorite ? "star.fill" : "star")
-                    .font(.body.weight(.semibold))
-                    .frame(width: 52, height: 52)
+                Image(systemName: "magnifyingglass")
+                    .font(.title3.weight(.semibold))
+                    .frame(width: MapChromeLayout.rightColumnWidth, height: MapChromeLayout.rightColumnWidth)
                     .contentShape(Circle())
             }
             .buttonStyle(.plain)
-            .foregroundStyle(currentPinIsFavorite ? Color.yellow : Color.primary)
-            .disabled(session.pin == nil)
-            .accessibilityLabel(currentPinIsFavorite ? "取消收藏" : "添加收藏")
-
+            .locusGlass(.interactive, in: Circle())
+            .accessibilityLabel("搜索地点")
         }
-        .padding(6)
-        .frame(width: MapChromeLayout.rightColumnWidth)
-        .locusGlass(.clear, in: RoundedRectangle(cornerRadius: 26, style: .continuous))
         .foregroundStyle(.primary)
-    }
-
-    private var routeReadyActions: some View {
-        HStack(spacing: 6) {
-            routeActionButton("删除", systemImage: "trash.fill", color: LocusTheme.danger) {
-                deleteGeneratedRoute()
-            }
-            routeActionButton("运行", systemImage: "play.fill", color: .blue) {
-                runGeneratedRoute()
-            }
-        }
-        .padding(4)
-        .locusGlass(.regular, in: Capsule())
-        .contentShape(Capsule())
-    }
-
-    private func routeActionButton(
-        _ title: String,
-        systemImage: String,
-        color: Color,
-        action: @escaping () -> Void
-    ) -> some View {
-        Button(action: action) {
-            Label(title, systemImage: systemImage)
-                .font(.subheadline.weight(.bold))
-                .foregroundStyle(color)
-                .frame(maxWidth: .infinity)
-                .frame(height: 34)
-                .contentShape(Capsule())
-        }
-        .buttonStyle(.plain)
     }
 
     private var bottomControlClearance: CGFloat {
         MapChromeLayout.rightRailClearance
     }
 
-    private var routeActionBottomClearance: CGFloat {
-        MapChromeLayout.rightRailClearance
-            + (favoriteRenameSuggestion == nil ? 0 : 52)
+    private var routeReadyState: Bool {
+        routeCoords.count > 1 && !session.routeActive && !session.routePaused
     }
 
     private var currentPinIsFavorite: Bool {
@@ -655,7 +652,7 @@ struct MapHomeView: View {
         } label: {
             Image(systemName: systemName)
                 .font(.body.weight(.semibold))
-                .frame(width: 52, height: 52)
+                .frame(width: 48, height: 48)
                 .contentShape(Rectangle())
         }
         .buttonStyle(.plain)

@@ -58,5 +58,5 @@ struct LocusApp: App {
 extension Notification.Name {
     static let locusImportGPX = Notification.Name("locusImportGPX")
     static let locusDeleteRoute = Notification.Name("locusDeleteRoute")
-    static let locusLocateCurrent = Notification.Name("locusLocateCurrent")
+    static let locusRunRoute = Notification.Name("locusRunRoute")
 }

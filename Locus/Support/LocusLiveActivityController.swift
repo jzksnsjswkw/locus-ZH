@@ -5,7 +5,6 @@ import Foundation
 actor LocusLiveActivityController {
     static let shared = LocusLiveActivityController()
     static let statusKey = "locus.liveActivityLastStatus"
-    private static let enabledKey = "locus.liveActivityEnabled"
 
     private var currentActivity: Activity<LocusActivityAttributes>?
     private let geocoder = CLGeocoder()
@@ -26,14 +25,6 @@ actor LocusLiveActivityController {
         elapsedTime: TimeInterval,
         allowRegionLookup: Bool
     ) async {
-        let storedPreference = UserDefaults.standard.object(forKey: Self.enabledKey) as? Bool
-        let isEnabled = storedPreference ?? true
-        guard isEnabled else {
-            await end()
-            registrationBlocked = false
-            recordStatus("已关闭")
-            return
-        }
         guard isActive, let coordinate else {
             await end()
             recordStatus("等待模拟定位")

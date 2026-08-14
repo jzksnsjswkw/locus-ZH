@@ -1,13 +1,14 @@
 import SwiftUI
 import NetworkExtension
 import CoreLocation
+import Contacts
 import UIKit
 
 enum MapChromeLayout {
     static let horizontalPadding: CGFloat = 16
     static let spacing: CGFloat = 10
-    static let primaryHeight: CGFloat = 64
-    static let rightColumnWidth: CGFloat = 64
+    static let primaryHeight: CGFloat = 80
+    static let rightColumnWidth: CGFloat = 56
     static let bottomPadding: CGFloat = 8
     static let rightRailClearance = bottomPadding + primaryHeight + spacing
 }
@@ -23,6 +24,7 @@ struct RootView: View {
     @State private var favoriteRenameTask: Task<Void, Never>?
     @State private var searchPresented = false
     @State private var showRouteSheet = false
+    @State private var generatedRouteReady = false
 
     var body: some View {
         // Bottom chrome is a sibling overlay aligned to the bottom — no full-screen
@@ -32,7 +34,8 @@ struct RootView: View {
                 showPlaces: $showPlaces,
                 favoriteRenameSuggestion: $favoriteRenameSuggestion,
                 searchPresented: $searchPresented,
-                showRouteSheet: $showRouteSheet
+                showRouteSheet: $showRouteSheet,
+                generatedRouteReady: $generatedRouteReady
             )
 
             VStack(spacing: 10) {
@@ -43,14 +46,16 @@ struct RootView: View {
                 }
 
                 if !searchPresented {
-                    HStack(alignment: .bottom, spacing: 10) {
-                        BottomControlsView(
-                            showSettings: $showSettings,
-                            showRouteSheet: $showRouteSheet
-                        )
-
-                        locationButton
+                    if generatedRouteReady {
+                        generatedRouteControls
+                            .frame(maxWidth: .infinity, alignment: .center)
+                            .transition(.move(edge: .bottom).combined(with: .opacity))
                     }
+
+                    BottomControlsView(
+                        showSettings: $showSettings,
+                        showRouteSheet: $showRouteSheet
+                    )
                     .transition(.move(edge: .bottom).combined(with: .opacity))
                 }
             }
@@ -59,9 +64,11 @@ struct RootView: View {
         }
         .sheet(isPresented: $showSettings) {
             SettingsView()
+                .presentationDetents([.medium, .large])
         }
         .sheet(isPresented: $showPlaces) {
             PlacesView()
+                .presentationDetents([.medium, .large])
         }
         .alert("Locus", isPresented: Binding(
             get: { session.lastError != nil },
@@ -103,6 +110,7 @@ struct RootView: View {
             favoriteRenameTask?.cancel()
         }
         .animation(.spring(response: 0.32, dampingFraction: 0.84), value: searchPresented)
+        .animation(.spring(response: 0.32, dampingFraction: 0.84), value: generatedRouteReady)
     }
 
     private func renameSuggestionButton(_ favorite: SavedPlace) -> some View {
@@ -127,25 +135,36 @@ struct RootView: View {
         .accessibilityHint("两秒内轻点即可自定义收藏名称")
     }
 
-    private var locationButton: some View {
-        Button {
-            UISelectionFeedbackGenerator().selectionChanged()
-            NotificationCenter.default.post(name: .locusLocateCurrent, object: nil)
-        } label: {
-            Image(systemName: "location.fill")
-                .font(.title2.weight(.semibold))
-                .frame(
-                    width: MapChromeLayout.rightColumnWidth,
-                    height: MapChromeLayout.primaryHeight
-                )
-                .contentShape(Circle())
+    private var generatedRouteControls: some View {
+        HStack(spacing: 0) {
+            Button {
+                NotificationCenter.default.post(name: .locusDeleteRoute, object: nil)
+            } label: {
+                Label("删除", systemImage: "trash.fill")
+                    .foregroundStyle(LocusTheme.danger)
+                    .frame(maxWidth: .infinity, minHeight: 42)
+                    .contentShape(Rectangle())
+            }
+
+            Divider()
+                .overlay(Color.white.opacity(0.25))
+                .frame(height: 28)
+
+            Button {
+                NotificationCenter.default.post(name: .locusRunRoute, object: nil)
+            } label: {
+                Label("运行", systemImage: "play.fill")
+                    .foregroundStyle(.blue)
+                    .frame(maxWidth: .infinity, minHeight: 42)
+                    .contentShape(Rectangle())
+            }
         }
+        .font(.subheadline.weight(.bold))
         .buttonStyle(.plain)
-        .locusGlass(.interactive, in: Circle())
-        .foregroundStyle(.primary)
-        .opacity(session.joystickActive ? 0 : 1)
-        .allowsHitTesting(!session.joystickActive)
-        .accessibilityLabel("回到当前位置")
+        .padding(.horizontal, 4)
+        .frame(width: 224, height: 50)
+        .locusGlass(.regular, in: Capsule())
+        .contentShape(Capsule())
     }
 }
 
@@ -155,6 +174,7 @@ struct StatusBarView: View {
 
     @StateObject private var locationSummary = MapLocationSummary()
     @State private var tunnelConnected = LocalDevVPN.isConnected
+    @State private var showLocationDetails = false
 
     private enum Display {
         case notSpoofing
@@ -202,14 +222,27 @@ struct StatusBarView: View {
     }
 
     var body: some View {
-        Group {
-            if case .connectVPN = display {
-                Button(action: LocalDevVPN.openOrInstall) {
-                    statusContent
+        VStack(alignment: .leading, spacing: 8) {
+            statusContent
+                .onTapGesture {
+                    if case .connectVPN = display {
+                        LocalDevVPN.openOrInstall()
+                    }
                 }
-                .buttonStyle(.plain)
-            } else {
-                statusContent
+                .onLongPressGesture(minimumDuration: 0.45) {
+                    guard locationSummaryCoordinate != nil else { return }
+                    UIImpactFeedbackGenerator(style: .soft).impactOccurred()
+                    withAnimation(.spring(response: 0.32, dampingFraction: 0.82)) {
+                        showLocationDetails.toggle()
+                    }
+                }
+
+            if showLocationDetails, locationSummaryCoordinate != nil {
+                locationDetailsCard
+                    .transition(
+                        .scale(scale: 0.88, anchor: .topLeading)
+                            .combined(with: .opacity)
+                    )
             }
         }
         .onAppear {
@@ -288,7 +321,7 @@ struct StatusBarView: View {
             }
 
             if locationSummaryCoordinate != nil {
-                Text(locationSummary.text)
+                Text(locationSummary.shortText)
                     .font(.caption)
                     .foregroundStyle(.secondary)
                     .lineLimit(1)
@@ -298,6 +331,82 @@ struct StatusBarView: View {
         .padding(.vertical, 10)
         .locusGlass(.clear, in: RoundedRectangle(cornerRadius: 18, style: .continuous))
         .contentShape(RoundedRectangle(cornerRadius: 18, style: .continuous))
+    }
+
+    private var locationDetailsCard: some View {
+        VStack(alignment: .leading, spacing: 9) {
+            HStack(spacing: 8) {
+                Label("位置信息", systemImage: "mappin.and.ellipse")
+                    .font(.subheadline.weight(.semibold))
+                Spacer(minLength: 6)
+                Button {
+                    UIPasteboard.general.string = locationCopyText
+                    UIImpactFeedbackGenerator(style: .light).impactOccurred()
+                } label: {
+                    Label("复制", systemImage: "doc.on.doc")
+                        .font(.caption.weight(.semibold))
+                }
+                .buttonStyle(.plain)
+                .foregroundStyle(LocusTheme.accent)
+                Button {
+                    withAnimation(.easeOut(duration: 0.18)) {
+                        showLocationDetails = false
+                    }
+                } label: {
+                    Image(systemName: "xmark.circle.fill")
+                        .foregroundStyle(.secondary)
+                }
+                .buttonStyle(.plain)
+                .accessibilityLabel("关闭位置信息")
+            }
+
+            Text(locationSummary.formattedAddress)
+                .font(.caption)
+                .foregroundStyle(.primary)
+                .lineLimit(2)
+
+            HStack(spacing: 12) {
+                locationDetailValue("国家", locationSummary.country)
+                locationDetailValue("城市", locationSummary.city)
+                locationDetailValue("邮编", locationSummary.postalCode)
+            }
+
+            if let coordinate = locationSummaryCoordinate {
+                Text(String(format: "%.5f, %.5f", coordinate.latitude, coordinate.longitude))
+                    .font(.caption2.monospacedDigit())
+                    .foregroundStyle(.secondary)
+            }
+        }
+        .padding(12)
+        .frame(width: 270, alignment: .leading)
+        .locusGlass(.regular, in: RoundedRectangle(cornerRadius: 20, style: .continuous))
+        .contentShape(RoundedRectangle(cornerRadius: 20, style: .continuous))
+    }
+
+    private func locationDetailValue(_ title: String, _ value: String) -> some View {
+        VStack(alignment: .leading, spacing: 1) {
+            Text(title)
+                .font(.caption2)
+                .foregroundStyle(.secondary)
+            Text(value)
+                .font(.caption.weight(.medium))
+                .lineLimit(1)
+        }
+    }
+
+    private var locationCopyText: String {
+        let coordinate = locationSummaryCoordinate.map {
+            String(format: "%.5f, %.5f", $0.latitude, $0.longitude)
+        } ?? ""
+        return [
+            locationSummary.formattedAddress,
+            "国家：\(locationSummary.country)",
+            "城市：\(locationSummary.city)",
+            "邮编：\(locationSummary.postalCode)",
+            coordinate
+        ]
+        .filter { !$0.isEmpty }
+        .joined(separator: "\n")
     }
 
     private func refreshTunnel() {
@@ -333,7 +442,19 @@ struct StatusBarView: View {
 
 @MainActor
 private final class MapLocationSummary: ObservableObject {
-    @Published private(set) var text = "正在获取地区"
+    @Published private(set) var country = "正在获取"
+    @Published private(set) var city = "地区"
+    @Published private(set) var postalCode = "—"
+    @Published private(set) var formattedAddress = "正在获取 Apple 地图地址"
+
+    var shortText: String {
+        [country, city]
+            .filter { !$0.isEmpty }
+            .reduce(into: [String]()) { result, value in
+                if result.last != value { result.append(value) }
+            }
+            .joined(separator: " ")
+    }
 
     private let geocoder = CLGeocoder()
     private var lastAttemptLocation: CLLocation?
@@ -364,23 +485,41 @@ private final class MapLocationSummary: ObservableObject {
         lookupTask = Task { [weak self] in
             guard let self else { return }
             do {
-                let placemark = try await self.geocoder.reverseGeocodeLocation(location).first
+                let placemark = try await self.geocoder.reverseGeocodeLocation(
+                    location,
+                    preferredLocale: Locale(identifier: "zh_Hans_CN")
+                ).first
                 guard !Task.isCancelled else { return }
-                let country = placemark?.country?.trimmingCharacters(in: .whitespacesAndNewlines)
-                let city = (placemark?.locality ?? placemark?.administrativeArea)?
+                self.country = placemark?.country?.trimmingCharacters(in: .whitespacesAndNewlines)
+                    .flatMap { $0.isEmpty ? nil : $0 } ?? "未知国家"
+                self.city = (placemark?.locality ?? placemark?.administrativeArea)?
                     .trimmingCharacters(in: .whitespacesAndNewlines)
-                let parts = [country, city]
-                    .compactMap { value -> String? in
-                        guard let value, !value.isEmpty else { return nil }
-                        return value
-                    }
-                    .reduce(into: [String]()) { result, value in
-                        if result.last != value { result.append(value) }
-                    }
-                self.text = parts.isEmpty ? "未知地区" : parts.joined(separator: " ")
+                    .flatMap { $0.isEmpty ? nil : $0 } ?? "未知城市"
+                self.postalCode = placemark?.postalCode?.trimmingCharacters(in: .whitespacesAndNewlines)
+                    .flatMap { $0.isEmpty ? nil : $0 } ?? "—"
+                if let postalAddress = placemark?.postalAddress {
+                    self.formattedAddress = CNPostalAddressFormatter
+                        .string(from: postalAddress, style: .mailingAddress)
+                        .split(whereSeparator: \.isNewline)
+                        .joined(separator: "，")
+                } else {
+                    self.formattedAddress = [
+                        placemark?.name,
+                        placemark?.subLocality,
+                        placemark?.locality,
+                        placemark?.administrativeArea,
+                        placemark?.country
+                    ]
+                    .compactMap { $0?.trimmingCharacters(in: .whitespacesAndNewlines) }
+                    .filter { !$0.isEmpty }
+                    .joined(separator: "，")
+                }
             } catch {
-                guard !Task.isCancelled, self.text == "正在获取地区" else { return }
-                self.text = "未知地区"
+                guard !Task.isCancelled, self.country == "正在获取" else { return }
+                self.country = "未知国家"
+                self.city = "未知城市"
+                self.postalCode = "—"
+                self.formattedAddress = "无法获取地址"
             }
         }
     }
@@ -392,7 +531,7 @@ struct BottomControlsView: View {
     @Binding var showSettings: Bool
     @Binding var showRouteSheet: Bool
 
-    private let trayShape = RoundedRectangle(cornerRadius: 28, style: .continuous)
+    private let trayShape = RoundedRectangle(cornerRadius: 30, style: .continuous)
 
     var body: some View {
         VStack(spacing: 12) {
@@ -432,10 +571,13 @@ struct BottomControlsView: View {
                     .padding(.horizontal, 4)
                 }
 
-                HStack(spacing: 10) {
-                    trayIcon("gearshape.fill") { showSettings = true }
+                HStack(spacing: 0) {
+                    trayIcon("slider.horizontal.3") { showSettings = true }
+                    controlDivider
                     routeButton
+                    controlDivider
                     joystickButton
+                    controlDivider
                     if session.canResumeRoute {
                         pausedRouteControls
                     } else {
@@ -443,7 +585,7 @@ struct BottomControlsView: View {
                     }
                 }
         }
-        .padding(6)
+        .padding(10)
         .locusGlass(.regular, in: trayShape)
         .contentShape(trayShape)
         .frame(maxWidth: .infinity, alignment: .trailing)
@@ -456,9 +598,9 @@ struct BottomControlsView: View {
             showRouteSheet = true
         } label: {
             Image(systemName: "point.topleft.down.to.point.bottomright.curvepath")
-                .font(.body.weight(.semibold))
+                .font(.title2.weight(.semibold))
                 .foregroundStyle(.primary)
-                .frame(width: 48, height: 48)
+                .frame(width: 60, height: 60)
                 .contentShape(Circle())
         }
         .buttonStyle(.plain)
@@ -473,10 +615,10 @@ struct BottomControlsView: View {
                 session.startJoystick(pairing: pairing)
             }
         } label: {
-            Image(systemName: "dot.circle.and.hand.point.up.left.fill")
-                .font(.body.weight(.semibold))
+            Image(systemName: "circle.grid.cross.fill")
+                .font(.title2.weight(.semibold))
                 .foregroundStyle(session.joystickActive ? LocusTheme.accentSecondary : .primary)
-                .frame(width: 48, height: 48)
+                .frame(width: 60, height: 60)
                 .contentShape(Circle())
         }
         .buttonStyle(.plain)
@@ -498,7 +640,7 @@ struct BottomControlsView: View {
             .font(.subheadline.weight(.bold))
             .foregroundStyle(session.isSpoofing && !session.canResumeRoute ? .white : .black)
             .frame(maxWidth: .infinity)
-            .padding(.vertical, 12)
+            .frame(height: 56)
             .padding(.horizontal, 8)
             .background(Capsule().fill(sessionControlColor))
             .contentShape(Capsule())
@@ -526,7 +668,7 @@ struct BottomControlsView: View {
                     .font(.subheadline.weight(.bold))
                     .foregroundStyle(.white)
                     .frame(maxWidth: .infinity)
-                    .frame(height: 44)
+                    .frame(height: 56)
                     .background(Capsule().fill(LocusTheme.danger))
             }
             .buttonStyle(.plain)
@@ -539,7 +681,7 @@ struct BottomControlsView: View {
                     .font(.subheadline.weight(.bold))
                     .foregroundStyle(.black)
                     .frame(maxWidth: .infinity)
-                    .frame(height: 44)
+                    .frame(height: 56)
                     .background(Capsule().fill(LocusTheme.accent))
             }
             .buttonStyle(.plain)
@@ -576,12 +718,18 @@ struct BottomControlsView: View {
             action()
         } label: {
             Image(systemName: systemName)
-                .font(.body.weight(.semibold))
+                .font(.title2.weight(.semibold))
                 .foregroundStyle(.primary)
-                .frame(width: 48, height: 48)
+                .frame(width: 60, height: 60)
                 .contentShape(Circle())
         }
         .buttonStyle(.plain)
+    }
+
+    private var controlDivider: some View {
+        Divider()
+            .overlay(Color.white.opacity(0.22))
+            .frame(height: 38)
     }
 }
 

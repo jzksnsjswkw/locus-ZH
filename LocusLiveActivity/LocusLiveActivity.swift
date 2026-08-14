@@ -18,47 +18,6 @@ struct LocusLiveActivityWidget: Widget {
                 .activitySystemActionForegroundColor(.cyan)
         } dynamicIsland: { context in
             DynamicIsland {
-                DynamicIslandExpandedRegion(.leading) {
-                    Label(context.state.status, systemImage: "location.fill")
-                        .font(.subheadline.weight(.semibold))
-                        .foregroundStyle(.green)
-                        .lineLimit(1)
-                }
-                DynamicIslandExpandedRegion(.trailing) {
-                    Label(context.state.elapsed, systemImage: "timer")
-                        .font(.subheadline.monospacedDigit().weight(.semibold))
-                        .foregroundStyle(.cyan)
-                }
-                DynamicIslandExpandedRegion(.bottom) {
-                    VStack(alignment: .leading, spacing: 8) {
-                        HStack(spacing: 18) {
-                            metric(
-                                title: "已行驶",
-                                value: context.state.distance,
-                                systemImage: "figure.walk.motion"
-                            )
-                            metric(
-                                title: "运行时间",
-                                value: context.state.elapsed,
-                                systemImage: "timer"
-                            )
-                        }
-
-                        Label(locationText(context.state), systemImage: "mappin.and.ellipse")
-                            .font(.caption)
-                            .foregroundStyle(.secondary)
-                            .lineLimit(1)
-
-                        Link(destination: URL(string: "locus://stop")!) {
-                            Label("停止模拟定位", systemImage: "stop.fill")
-                                .font(.subheadline.weight(.bold))
-                                .foregroundStyle(.white)
-                                .frame(maxWidth: .infinity)
-                                .frame(height: 34)
-                                .background(Capsule().fill(.red))
-                        }
-                    }
-                }
             } compactLeading: {
                 Image(systemName: "location.fill")
                     .foregroundStyle(.green)

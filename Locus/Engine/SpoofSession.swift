@@ -414,7 +414,7 @@ final class SpoofSession: ObservableObject {
     }
 
     private func shouldLookupCountry(for favorite: SavedPlace) -> Bool {
-        guard favorite.countryName == nil else { return false }
+        guard favorite.countryName == nil || favorite.cityName == nil else { return false }
         guard let lastAttempt = favorite.countryLookupLastAttempt else { return true }
         return Date().timeIntervalSince(lastAttempt) >= countryLookupRetryDelay
     }
@@ -450,6 +450,9 @@ final class SpoofSession: ObservableObject {
             }
             favorites[index].countryCode = countryCode
             favorites[index].countryName = localizedCountry ?? placemark.country
+            favorites[index].cityName = placemark.locality
+                ?? placemark.administrativeArea
+                ?? placemark.subAdministrativeArea
             favorites[index].countryLookupAttempted = true
 
             if favorites[index].nameIsUserEdited != true,

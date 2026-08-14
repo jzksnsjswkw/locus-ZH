@@ -8,6 +8,7 @@ struct SavedPlace: Identifiable, Codable, Equatable {
     var longitude: Double
     var countryCode: String? = nil
     var countryName: String? = nil
+    var cityName: String? = nil
     var countryLookupAttempted: Bool? = nil
     var countryLookupLastAttempt: Date? = nil
     var nameIsUserEdited: Bool? = nil

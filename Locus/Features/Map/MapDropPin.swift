@@ -47,7 +47,7 @@ struct MapDropPin: View {
             }
         }
         // The frame never changes, so the red pin tip stays fixed while menus open.
-        .frame(width: 236, height: 108, alignment: .bottom)
+        .frame(width: 200, height: 102, alignment: .bottom)
         .animation(.spring(response: 0.28, dampingFraction: 0.78), value: selected)
         .animation(.spring(response: 0.28, dampingFraction: 0.78), value: expandedActions)
         .animation(.easeOut(duration: 0.15), value: isDragging)
@@ -57,10 +57,10 @@ struct MapDropPin: View {
         HStack(spacing: 4) {
             actionButton("删除", systemImage: "trash.fill", color: LocusTheme.danger, action: onRemove)
             if expandedActions {
-                actionButton("以终点生成轨迹", systemImage: "road.lanes", action: onBuildRouteToPin)
+                actionButton("生成轨迹", systemImage: "road.lanes", color: .blue, action: onBuildRouteToPin)
             }
         }
-        .padding(4)
+        .padding(3)
         .locusGlass(.regular, in: Capsule())
         .contentShape(Capsule())
         .fixedSize()
@@ -76,8 +76,8 @@ struct MapDropPin: View {
             Label(title, systemImage: systemImage)
                 .font(.caption.weight(.semibold))
                 .foregroundStyle(color)
-                .padding(.horizontal, 8)
-                .frame(height: 36)
+                .padding(.horizontal, 6)
+                .frame(height: 30)
                 .contentShape(Capsule())
         }
         .buttonStyle(.plain)

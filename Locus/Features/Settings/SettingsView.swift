@@ -194,7 +194,7 @@ struct PlacesView: View {
                         Section(group.id) {
                             ForEach(group.places) { place in
                                 favoriteButton(place)
-                                    .swipeActions(edge: .trailing, allowsFullSwipe: true) {
+                                    .swipeActions(edge: .trailing, allowsFullSwipe: false) {
                                         Button(role: .destructive) {
                                             session.removeFavorite(place)
                                         } label: {
@@ -206,7 +206,7 @@ struct PlacesView: View {
                                         } label: {
                                             Label("重命名", systemImage: "pencil")
                                         }
-                                        .tint(.gray)
+                                        .tint(.blue)
                                     }
                             }
                         }

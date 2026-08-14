@@ -24,8 +24,7 @@ struct RootView: View {
             VStack(spacing: 10) {
                 if let favoriteRenameSuggestion {
                     renameSuggestionButton(favoriteRenameSuggestion)
-                        .frame(maxWidth: .infinity, alignment: .leading)
-                        .padding(.trailing, 70)
+                        .frame(maxWidth: .infinity, alignment: .center)
                         .transition(.move(edge: .bottom).combined(with: .opacity))
                 }
 
@@ -93,6 +92,7 @@ struct RootView: View {
         } label: {
             Label("重命名“\(session.favoriteDisplayName(favorite))”", systemImage: "pencil")
                 .font(.subheadline.weight(.semibold))
+                .foregroundStyle(LocusTheme.danger)
                 .lineLimit(1)
                 .padding(.horizontal, 14)
                 .padding(.vertical, 10)
@@ -238,7 +238,7 @@ struct BottomControlsView: View {
                     session.updateJoystick(vector: vector)
                 }
                 .frame(width: 148, height: 148)
-                .frame(maxWidth: .infinity, alignment: .leading)
+                .frame(maxWidth: .infinity, alignment: .trailing)
             }
 
             VStack(spacing: 12) {

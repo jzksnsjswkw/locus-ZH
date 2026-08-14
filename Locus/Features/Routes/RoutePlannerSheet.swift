@@ -43,8 +43,9 @@ struct RoutePlannerSheet: View {
                     }
                 }
 
-                Section {
-                    Text("长按地图上的红色图钉并选择“以终点生成轨迹”；当前定位点作为起点，红图钉作为终点。速度设置同时作用于轨迹和摇杆。")
+                Section("生成轨迹") {
+                    Label("长按地图上的红色图钉，然后选择“生成轨迹”", systemImage: "hand.tap.fill")
+                    Text("当前定位点始终作为起点，红图钉作为终点。速度设置同时作用于轨迹和摇杆。")
                         .font(.footnote)
                         .foregroundStyle(.secondary)
                 }

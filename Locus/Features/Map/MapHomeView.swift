@@ -183,17 +183,20 @@ struct MapHomeView: View {
 
             topChrome
 
-            VStack {
-                Spacer()
-                HStack {
+            if !session.joystickActive {
+                VStack {
                     Spacer()
-                    rightLowerControls
+                    HStack {
+                        Spacer()
+                        rightLowerControls
+                    }
+                    .padding(.trailing, 16)
+                    .padding(.bottom, bottomControlClearance)
                 }
-                .padding(.trailing, 16)
-                .padding(.bottom, bottomControlClearance)
+                .allowsHitTesting(true)
+                .transition(.move(edge: .trailing).combined(with: .opacity))
+                .zIndex(2)
             }
-            .allowsHitTesting(true)
-            .zIndex(2)
 
             if let favoriteToast {
                 Text(favoriteToast)
@@ -260,14 +263,12 @@ struct MapHomeView: View {
         VStack(spacing: 10) {
             searchBar
 
-            StatusBarView()
-                .frame(maxWidth: .infinity, alignment: .leading)
-
             if !searchText.isEmpty && !search.results.isEmpty {
                 searchResults
             }
 
-            HStack {
+            HStack(alignment: .top, spacing: 8) {
+                StatusBarView()
                 Spacer(minLength: 0)
                 mapChromeButtons
             }
@@ -358,19 +359,11 @@ struct MapHomeView: View {
             }
             .foregroundStyle(drawMode ? LocusTheme.accentSecondary : .primary)
 
-            Button {
-                toggleCurrentFavorite()
-            } label: {
-                let isFavorite = session.pin.flatMap { session.favorite(at: $0) } != nil
-                Image(systemName: isFavorite ? "star.fill" : "star")
-                    .font(.body.weight(.semibold))
-                    .frame(width: 44, height: 44)
-                    .contentShape(Rectangle())
+            chromeIconButton("folder.fill") {
+                searchFocused = false
+                showPlaces = true
             }
-            .buttonStyle(.plain)
-            .foregroundStyle(session.pin.flatMap { session.favorite(at: $0) } == nil ? Color.primary : Color.yellow)
-            .disabled(session.pin == nil)
-            .accessibilityLabel(session.pin.flatMap { session.favorite(at: $0) } == nil ? "添加收藏" : "取消收藏")
+            .accessibilityLabel("打开收藏夹")
         }
         .padding(6)
         .locusGlass(.clear, in: Capsule())
@@ -380,16 +373,17 @@ struct MapHomeView: View {
     private var rightLowerControls: some View {
         VStack(spacing: 0) {
             Button {
-                searchFocused = false
-                showPlaces = true
+                toggleCurrentFavorite()
             } label: {
-                Image(systemName: "star.fill")
+                Image(systemName: currentPinIsFavorite ? "star.fill" : "star")
                     .font(.body.weight(.semibold))
                     .frame(width: 48, height: 48)
                     .contentShape(Circle())
             }
             .buttonStyle(.plain)
-            .accessibilityLabel("打开收藏夹")
+            .foregroundStyle(currentPinIsFavorite ? Color.yellow : Color.primary)
+            .disabled(session.pin == nil)
+            .accessibilityLabel(currentPinIsFavorite ? "取消收藏" : "添加收藏")
 
             Divider()
                 .frame(width: 30)
@@ -413,6 +407,11 @@ struct MapHomeView: View {
 
     private var bottomControlClearance: CGFloat {
         session.routeActive || session.routePaused ? 174 : 96
+    }
+
+    private var currentPinIsFavorite: Bool {
+        guard let pin = session.pin else { return false }
+        return session.favorite(at: pin) != nil
     }
 
     /// Centers on the spoofed fix while spoofing, otherwise the real GPS —

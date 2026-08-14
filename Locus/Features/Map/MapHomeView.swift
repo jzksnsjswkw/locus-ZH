@@ -4,6 +4,8 @@ import SwiftUI
 struct MapHomeView: View {
     @EnvironmentObject private var session: SpoofSession
     @EnvironmentObject private var pairing: PairingStore
+    @Binding var showPlaces: Bool
+    @Binding var favoriteRenameSuggestion: SavedPlace?
 
     @StateObject private var search = PlaceSearchCompleter()
     @State private var position: MapCameraPosition = .userLocation(fallback: .automatic)
@@ -19,6 +21,8 @@ struct MapHomeView: View {
     @State private var drawnPath: [CLLocationCoordinate2D] = []
     @State private var drawMode = false
     @State private var pinSelected = false
+    @State private var pinExpandedActions = false
+    @State private var selectedFavoriteID: String?
     @State private var isDraggingPin = false
     @State private var suppressNextMapTap = false
     @State private var favoriteToast: String?
@@ -44,20 +48,25 @@ struct MapHomeView: View {
                     UserAnnotation()
 
                     ForEach(session.favorites) { favorite in
-                        Annotation("", coordinate: favorite.coordinate) {
-                            Button {
-                                selectFavorite(favorite)
-                            } label: {
-                                Image(systemName: "star.fill")
-                                    .font(.title3.weight(.bold))
-                                    .foregroundStyle(.yellow)
-                                    .shadow(color: .black.opacity(0.45), radius: 2, y: 1)
-                                    .frame(width: 44, height: 44)
-                                    .contentShape(Rectangle())
-                            }
-                            .buttonStyle(.plain)
+                        Annotation(
+                            "",
+                            coordinate: favorite.coordinate,
+                            anchor: UnitPoint(x: 0.5, y: 0.76)
+                        ) {
+                            FavoriteMapMarker(
+                                selected: selectedFavoriteID == favorite.id,
+                                onSelect: {
+                                    selectedFavoriteID = favorite.id
+                                    pinSelected = false
+                                    pinExpandedActions = false
+                                    selectFavorite(favorite)
+                                },
+                                onRemove: {
+                                    removeFavoriteFromMap(favorite)
+                                }
+                            )
                             .accessibilityLabel(session.favoriteDisplayName(favorite))
-                            .accessibilityHint("双击即可快速切换模拟位置")
+                            .accessibilityHint("轻点即可切换模拟位置并显示删除按钮")
                         }
                     }
 
@@ -65,14 +74,29 @@ struct MapHomeView: View {
                         Annotation("", coordinate: pin, anchor: .bottom) {
                             MapDropPin(
                                 selected: pinSelected,
+                                expandedActions: pinExpandedActions,
                                 isDragging: isDraggingPin,
                                 onSelect: {
                                     searchFocused = false
                                     suppressNextMapTap = true
+                                    selectedFavoriteID = nil
                                     withAnimation(.spring(response: 0.28, dampingFraction: 0.78)) {
                                         pinSelected.toggle()
+                                        pinExpandedActions = false
                                     }
                                     DispatchQueue.main.asyncAfter(deadline: .now() + 0.05) {
+                                        suppressNextMapTap = false
+                                    }
+                                },
+                                onShowExpandedActions: {
+                                    searchFocused = false
+                                    suppressNextMapTap = true
+                                    selectedFavoriteID = nil
+                                    withAnimation(.spring(response: 0.28, dampingFraction: 0.78)) {
+                                        pinSelected = true
+                                        pinExpandedActions = true
+                                    }
+                                    DispatchQueue.main.asyncAfter(deadline: .now() + 0.08) {
                                         suppressNextMapTap = false
                                     }
                                 },
@@ -81,16 +105,19 @@ struct MapHomeView: View {
                                     withAnimation {
                                         session.pin = nil
                                         pinSelected = false
+                                        pinExpandedActions = false
                                     }
                                     DispatchQueue.main.asyncAfter(deadline: .now() + 0.05) {
                                         suppressNextMapTap = false
                                     }
                                 },
+                                onBuildRouteToPin: buildRouteToCurrentPin,
                                 onDragBegan: {
                                     searchFocused = false
                                     suppressNextMapTap = true
                                     pinPlaceName = nil
                                     pinSelected = false
+                                    pinExpandedActions = false
                                     isDraggingPin = true
                                 },
                                 onDragMoved: { globalPoint in
@@ -138,6 +165,8 @@ struct MapHomeView: View {
                     searchFocused = false
                     guard !suppressNextMapTap, !isDraggingPin else { return }
                     pinSelected = false
+                    pinExpandedActions = false
+                    selectedFavoriteID = nil
                     placePin(at: point, proxy: proxy)
                 }
                 .overlay {
@@ -153,6 +182,18 @@ struct MapHomeView: View {
             .background(Color.black.ignoresSafeArea())
 
             topChrome
+
+            VStack {
+                Spacer()
+                HStack {
+                    Spacer()
+                    rightLowerControls
+                }
+                .padding(.trailing, 16)
+                .padding(.bottom, bottomControlClearance)
+            }
+            .allowsHitTesting(true)
+            .zIndex(2)
 
             if let favoriteToast {
                 Text(favoriteToast)
@@ -175,7 +216,10 @@ struct MapHomeView: View {
             favoriteToast = nil
         }
         .onChange(of: session.pin?.latitude) { _, newValue in
-            if newValue == nil { pinSelected = false }
+            if newValue == nil {
+                pinSelected = false
+                pinExpandedActions = false
+            }
         }
         .onReceive(NotificationCenter.default.publisher(for: .locusImportGPX)) { note in
             guard let url = note.object as? URL else { return }
@@ -188,10 +232,6 @@ struct MapHomeView: View {
         }
         .sheet(isPresented: $showRouteSheet) {
             RoutePlannerSheet(
-                start: $routeStart,
-                end: $routeEnd,
-                isRouting: $isRouting,
-                onBuild: buildRoadRoute,
                 onPlay: playRoute,
                 onImportGPX: { showGPXImporter = true },
                 onExportGPX: exportGPX,
@@ -218,18 +258,18 @@ struct MapHomeView: View {
 
     private var topChrome: some View {
         VStack(spacing: 10) {
-            StatusBarView()
-
             searchBar
+
+            StatusBarView()
+                .frame(maxWidth: .infinity, alignment: .leading)
 
             if !searchText.isEmpty && !search.results.isEmpty {
                 searchResults
             }
 
-            HStack(alignment: .center, spacing: 10) {
-                mapChromeButtons
+            HStack {
                 Spacer(minLength: 0)
-                locateButton
+                mapChromeButtons
             }
         }
         .padding(.horizontal, 16)
@@ -305,7 +345,7 @@ struct MapHomeView: View {
     }
 
     private var mapChromeButtons: some View {
-        HStack(spacing: 4) {
+        VStack(spacing: 4) {
             chromeIconButton("square.3.layers.3d") {
                 session.mapStyleIndex = (session.mapStyleIndex + 1) % 3
             }
@@ -318,41 +358,61 @@ struct MapHomeView: View {
             }
             .foregroundStyle(drawMode ? LocusTheme.accentSecondary : .primary)
 
-            if session.pin != nil {
-                Button {
-                    toggleCurrentFavorite()
-                } label: {
-                    let isFavorite = session.pin.flatMap { session.favorite(at: $0) } != nil
-                    Image(systemName: isFavorite ? "star.fill" : "star")
-                        .font(.body.weight(.semibold))
-                        .frame(width: 44, height: 44)
-                        .contentShape(Rectangle())
-                }
-                .buttonStyle(.plain)
-                .foregroundStyle(session.pin.flatMap { session.favorite(at: $0) } == nil ? Color.primary : Color.yellow)
-                .accessibilityLabel(session.pin.flatMap { session.favorite(at: $0) } == nil ? "添加收藏" : "取消收藏")
+            Button {
+                toggleCurrentFavorite()
+            } label: {
+                let isFavorite = session.pin.flatMap { session.favorite(at: $0) } != nil
+                Image(systemName: isFavorite ? "star.fill" : "star")
+                    .font(.body.weight(.semibold))
+                    .frame(width: 44, height: 44)
+                    .contentShape(Rectangle())
             }
+            .buttonStyle(.plain)
+            .foregroundStyle(session.pin.flatMap { session.favorite(at: $0) } == nil ? Color.primary : Color.yellow)
+            .disabled(session.pin == nil)
+            .accessibilityLabel(session.pin.flatMap { session.favorite(at: $0) } == nil ? "添加收藏" : "取消收藏")
         }
         .padding(6)
         .locusGlass(.clear, in: Capsule())
         .contentShape(Capsule())
     }
 
-    private var locateButton: some View {
-        Button {
-            searchFocused = false
-            goToCurrentLocation()
-        } label: {
-            Image(systemName: "location.fill")
-                .font(.body.weight(.semibold))
-                .frame(width: 48, height: 48)
-                .contentShape(Circle())
+    private var rightLowerControls: some View {
+        VStack(spacing: 0) {
+            Button {
+                searchFocused = false
+                showPlaces = true
+            } label: {
+                Image(systemName: "star.fill")
+                    .font(.body.weight(.semibold))
+                    .frame(width: 48, height: 48)
+                    .contentShape(Circle())
+            }
+            .buttonStyle(.plain)
+            .accessibilityLabel("打开收藏夹")
+
+            Divider()
+                .frame(width: 30)
+
+            Button {
+                searchFocused = false
+                goToCurrentLocation()
+            } label: {
+                Image(systemName: "location.fill")
+                    .font(.body.weight(.semibold))
+                    .frame(width: 48, height: 48)
+                    .contentShape(Circle())
+            }
+            .buttonStyle(.plain)
+            .accessibilityLabel("回到当前位置")
         }
-        .buttonStyle(.plain)
-        .locusGlass(.interactive, in: Circle())
+        .padding(4)
+        .locusGlass(.clear, in: RoundedRectangle(cornerRadius: 26, style: .continuous))
         .foregroundStyle(.primary)
-        .contentShape(Circle())
-        .accessibilityLabel("回到当前位置")
+    }
+
+    private var bottomControlClearance: CGFloat {
+        session.routeActive || session.routePaused ? 174 : 96
     }
 
     /// Centers on the spoofed fix while spoofing, otherwise the real GPS —
@@ -401,7 +461,16 @@ struct MapHomeView: View {
         let name = session.suggestedFavoriteName(for: pin, fallback: pinPlaceName)
         let result = session.toggleFavorite(name: name, coordinate: pin)
         pinSelected = false
+        pinExpandedActions = false
         UIImpactFeedbackGenerator(style: .light).impactOccurred()
+        if result.added, let favorite = session.favorite(at: pin) {
+            withAnimation(.spring(response: 0.3, dampingFraction: 0.82)) {
+                favoriteRenameSuggestion = favorite
+            }
+        } else if let suggestion = favoriteRenameSuggestion,
+                  session.favorite(at: suggestion.coordinate) == nil {
+            favoriteRenameSuggestion = nil
+        }
         showFavoriteToast(result.added ? "已收藏：\(result.name)" : "已取消收藏：\(result.name)")
     }
 
@@ -414,6 +483,50 @@ struct MapHomeView: View {
         DispatchQueue.main.asyncAfter(deadline: .now() + 0.15) {
             suppressNextMapTap = false
         }
+    }
+
+    private func removeFavoriteFromMap(_ favorite: SavedPlace) {
+        suppressNextMapTap = true
+        selectedFavoriteID = nil
+        pinSelected = false
+        pinExpandedActions = false
+        if favoriteRenameSuggestion?.id == favorite.id {
+            favoriteRenameSuggestion = nil
+        }
+        session.removeFavorite(favorite)
+        UINotificationFeedbackGenerator().notificationOccurred(.success)
+        showFavoriteToast("已删除收藏：\(session.favoriteDisplayName(favorite))")
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.2) {
+            suppressNextMapTap = false
+        }
+    }
+
+    private func buildRouteToCurrentPin() {
+        guard let pin = session.pin else { return }
+        guard let current = currentRouteLocation else {
+            session.lastError = "尚未取得当前定位，请稍后重试。"
+            return
+        }
+        routeStart = current
+        routeEnd = pin
+        closePinActions()
+        showFavoriteToast("正在生成前往图钉的道路轨迹")
+        buildRoadRoute()
+    }
+
+    private func closePinActions() {
+        suppressNextMapTap = true
+        withAnimation(.easeOut(duration: 0.15)) {
+            pinSelected = false
+            pinExpandedActions = false
+        }
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.15) {
+            suppressNextMapTap = false
+        }
+    }
+
+    private var currentRouteLocation: CLLocationCoordinate2D? {
+        session.simulated ?? session.realMapCoordinate
     }
 
     private func showFavoriteToast(_ message: String) {
@@ -481,8 +594,8 @@ struct MapHomeView: View {
     }
 
     private func buildRoadRoute() {
-        guard let start = routeStart ?? session.simulated ?? session.pin,
-              let end = routeEnd else {
+        guard !isRouting else { return }
+        guard let start = routeStart, let end = routeEnd else {
             session.lastError = "请设置路线起点和终点。"
             return
         }
@@ -493,6 +606,8 @@ struct MapHomeView: View {
                 await MainActor.run {
                     routeCoords = coords
                     isRouting = false
+                    UINotificationFeedbackGenerator().notificationOccurred(.success)
+                    showFavoriteToast("道路轨迹已生成")
                 }
             } catch {
                 await MainActor.run {
@@ -544,6 +659,46 @@ struct MapHomeView: View {
         } catch {
             session.lastError = error.localizedDescription
         }
+    }
+}
+
+private struct FavoriteMapMarker: View {
+    var selected: Bool
+    var onSelect: () -> Void
+    var onRemove: () -> Void
+
+    var body: some View {
+        ZStack(alignment: .bottom) {
+            Button(action: onSelect) {
+                Image(systemName: "star.fill")
+                    .font(.title3.weight(.bold))
+                    .foregroundStyle(.yellow)
+                    .shadow(color: .black.opacity(0.45), radius: 2, y: 1)
+                    .frame(width: 44, height: 44)
+                    .contentShape(Rectangle())
+            }
+            .buttonStyle(.plain)
+
+            if selected {
+                Button(action: onRemove) {
+                    Label("删除收藏", systemImage: "trash.fill")
+                        .font(.caption.weight(.semibold))
+                        .foregroundStyle(LocusTheme.danger)
+                        .padding(.horizontal, 10)
+                        .frame(height: 36)
+                }
+                .buttonStyle(.plain)
+                .locusGlass(.regular, in: Capsule())
+                .contentShape(Capsule())
+                .fixedSize()
+                .offset(y: -46)
+                .transition(.scale(scale: 0.9, anchor: .bottom).combined(with: .opacity))
+            }
+        }
+        // The delete button remains inside this frame, so Map cannot receive it
+        // as a background tap and create a replacement pin.
+        .frame(width: 160, height: 92, alignment: .bottom)
+        .animation(.spring(response: 0.28, dampingFraction: 0.8), value: selected)
     }
 }
 

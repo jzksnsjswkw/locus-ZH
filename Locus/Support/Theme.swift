@@ -44,7 +44,10 @@ struct LocusGlassModifier<S: Shape>: ViewModifier {
     @available(iOS 26.0, *)
     private var glass: Glass {
         var g: Glass = style == .clear ? .clear : .regular
-        if style == .interactive { g = g.interactive() }
+        // Every glass surface should react to a sustained touch. Keeping this
+        // in the shared modifier avoids adding competing long-press gestures
+        // to buttons, map annotations and text fields.
+        g = g.interactive()
         if let tint { g = g.tint(tint) }
         return g
     }

@@ -1,16 +1,22 @@
 import MapKit
 import SwiftUI
 
-/// Map pin with Liquid Glass “Remove Pin” menu and long-press drag.
+/// Draggable map pin with an in-bounds action menu. Keeping the menu inside the
+/// annotation's fixed frame prevents its buttons from falling through to Map.
 struct MapDropPin: View {
     var selected: Bool
+    var expandedActions: Bool
     var isDragging: Bool
     var onSelect: () -> Void
+    var onShowExpandedActions: () -> Void
     var onRemove: () -> Void
+    var onBuildRouteToPin: () -> Void
     var onDragBegan: () -> Void
     var onDragMoved: (CGPoint) -> Void
     var onDragEnded: () -> Void
     @State private var tapScale: CGFloat = 1
+    @State private var draggingFromLongPress = false
+    @State private var suppressTapAfterLongPress = false
 
     var body: some View {
         ZStack(alignment: .bottom) {
@@ -19,7 +25,9 @@ struct MapDropPin: View {
                 .frame(width: 44, height: 48, alignment: .bottom)
                 .shadow(color: .black.opacity(0.35), radius: isDragging ? 8 : 4, y: 2)
                 .scaleEffect(tapScale * (isDragging ? 1.12 : 1), anchor: .bottom)
+                .contentShape(Rectangle())
                 .onTapGesture {
+                    guard !suppressTapAfterLongPress else { return }
                     withAnimation(.easeOut(duration: 0.08)) {
                         tapScale = 0.88
                     }
@@ -33,29 +41,46 @@ struct MapDropPin: View {
                 .gesture(dragGesture)
 
             if selected && !isDragging {
-                Button(action: onRemove) {
-                    Label("删除图钉", systemImage: "trash.fill")
-                        .font(.subheadline.weight(.semibold))
-                        .foregroundStyle(LocusTheme.danger)
-                        .padding(.horizontal, 14)
-                        .padding(.vertical, 10)
-                }
-                .buttonStyle(.plain)
-                .locusGlass(.regular, in: Capsule())
-                .contentShape(Capsule())
-                .fixedSize()
+                pinActionMenu
                 .offset(y: -56)
                 .transition(.scale(scale: 0.9, anchor: .bottom).combined(with: .opacity))
             }
         }
-        .frame(width: 44, height: 48, alignment: .bottom)
-        // The menu is an offset overlay, so selection never changes annotation size.
-        .padding(.bottom, 2)
+        // The frame never changes, so the red pin tip stays fixed while menus open.
+        .frame(width: 236, height: 108, alignment: .bottom)
         .animation(.spring(response: 0.28, dampingFraction: 0.78), value: selected)
+        .animation(.spring(response: 0.28, dampingFraction: 0.78), value: expandedActions)
         .animation(.easeOut(duration: 0.15), value: isDragging)
-        .accessibilityElement(children: .combine)
-        .accessibilityLabel(selected ? "已选图钉" : "地图图钉")
-        .accessibilityHint("轻点以显示删除按钮，长按可拖动。")
+    }
+
+    private var pinActionMenu: some View {
+        HStack(spacing: 4) {
+            actionButton("删除", systemImage: "trash.fill", color: LocusTheme.danger, action: onRemove)
+            if expandedActions {
+                actionButton("以终点生成轨迹", systemImage: "road.lanes", action: onBuildRouteToPin)
+            }
+        }
+        .padding(4)
+        .locusGlass(.regular, in: Capsule())
+        .contentShape(Capsule())
+        .fixedSize()
+    }
+
+    private func actionButton(
+        _ title: String,
+        systemImage: String,
+        color: Color = .primary,
+        action: @escaping () -> Void
+    ) -> some View {
+        Button(action: action) {
+            Label(title, systemImage: systemImage)
+                .font(.caption.weight(.semibold))
+                .foregroundStyle(color)
+                .padding(.horizontal, 8)
+                .frame(height: 36)
+                .contentShape(Capsule())
+        }
+        .buttonStyle(.plain)
     }
 
     private var dragGesture: some Gesture {
@@ -67,7 +92,10 @@ struct MapDropPin: View {
                     break
                 case .second(true, let drag):
                     if let drag {
-                        if !isDragging {
+                        let distance = max(abs(drag.translation.width), abs(drag.translation.height))
+                        guard distance >= 8 else { break }
+                        if !draggingFromLongPress {
+                            draggingFromLongPress = true
                             onDragBegan()
                             UIImpactFeedbackGenerator(style: .medium).impactOccurred()
                         }
@@ -77,8 +105,20 @@ struct MapDropPin: View {
                     break
                 }
             }
-            .onEnded { _ in
-                onDragEnded()
+            .onEnded { value in
+                if case .second(true, _) = value {
+                    suppressTapAfterLongPress = true
+                    if draggingFromLongPress {
+                        onDragEnded()
+                    } else {
+                        UIImpactFeedbackGenerator(style: .light).impactOccurred()
+                        onShowExpandedActions()
+                    }
+                    DispatchQueue.main.asyncAfter(deadline: .now() + 0.25) {
+                        suppressTapAfterLongPress = false
+                    }
+                }
+                draggingFromLongPress = false
             }
     }
 }

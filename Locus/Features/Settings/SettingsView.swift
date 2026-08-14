@@ -128,7 +128,7 @@ struct SettingsView: View {
             }
             .navigationTitle("设置")
             .toolbar {
-                ToolbarItem(placement: .cancellationAction) {
+                ToolbarItem(placement: .confirmationAction) {
                     Button("完成") {
                         TunnelConfig.setTargetIP(tunnelIP)
                         dismiss()
@@ -235,7 +235,7 @@ struct PlacesView: View {
                 await session.backfillFavoriteCountries()
             }
             .toolbar {
-                ToolbarItem(placement: .cancellationAction) {
+                ToolbarItem(placement: .confirmationAction) {
                     Button("完成") { dismiss() }
                 }
             }

@@ -1,11 +1,6 @@
-import CoreLocation
 import SwiftUI
 
 struct RoutePlannerSheet: View {
-    @Binding var start: CLLocationCoordinate2D?
-    @Binding var end: CLLocationCoordinate2D?
-    @Binding var isRouting: Bool
-    var onBuild: () -> Void
     var onPlay: () -> Void
     var onImportGPX: () -> Void
     var onExportGPX: () -> Void
@@ -17,31 +12,6 @@ struct RoutePlannerSheet: View {
     var body: some View {
         NavigationStack {
             List {
-                Section("道路路线") {
-                    Button("使用当前图钉或模拟位置作为起点") {
-                        start = session.simulated ?? session.pin
-                    }
-                    Button("使用当前图钉作为终点") {
-                        end = session.pin
-                    }
-                    LabeledContent("起点") {
-                        Text(coordText(start)).font(.caption.monospaced())
-                    }
-                    LabeledContent("终点") {
-                        Text(coordText(end)).font(.caption.monospaced())
-                    }
-                    Button {
-                        onBuild()
-                    } label: {
-                        if isRouting {
-                            ProgressView()
-                        } else {
-                            Label("沿道路规划步行或驾车路线", systemImage: "road.lanes")
-                        }
-                    }
-                    .disabled(isRouting)
-                }
-
                 Section("轨迹运行") {
                     HStack {
                         Label("速度", systemImage: "speedometer")
@@ -74,22 +44,18 @@ struct RoutePlannerSheet: View {
                 }
 
                 Section {
-                    Text("优先使用 Apple 地图规划道路路线；路线服务器不可用时自动生成直线备用路线。速度设置同时作用于轨迹和摇杆。")
+                    Text("长按地图上的红色图钉并选择“以终点生成轨迹”；当前定位点作为起点，红图钉作为终点。速度设置同时作用于轨迹和摇杆。")
                         .font(.footnote)
                         .foregroundStyle(.secondary)
                 }
             }
             .navigationTitle("轨迹")
             .toolbar {
-                ToolbarItem(placement: .cancellationAction) {
+                ToolbarItem(placement: .confirmationAction) {
                     Button("完成") { dismiss() }
                 }
             }
         }
     }
 
-    private func coordText(_ c: CLLocationCoordinate2D?) -> String {
-        guard let c else { return "—" }
-        return String(format: "%.5f, %.5f", c.latitude, c.longitude)
-    }
 }

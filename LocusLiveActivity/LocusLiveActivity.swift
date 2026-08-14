@@ -18,6 +18,11 @@ struct LocusLiveActivityWidget: Widget {
                 .activitySystemActionForegroundColor(.cyan)
         } dynamicIsland: { context in
             DynamicIsland {
+                // ActivityKit requires one expanded region even when Locus intentionally
+                // presents no expanded content. Keep the region visually empty.
+                DynamicIslandExpandedRegion(.center) {
+                    EmptyView()
+                }
             } compactLeading: {
                 Image(systemName: "location.fill")
                     .foregroundStyle(.green)

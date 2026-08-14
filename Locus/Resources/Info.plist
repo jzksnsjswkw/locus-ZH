@@ -39,11 +39,11 @@
 		<string>UIInterfaceOrientationLandscapeRight</string>
 	</array>
 	<key>NSLocationWhenInUseUsageDescription</key>
-	<string>Locus uses your real location so you can aim the map and return home after teleporting.</string>
+	<string>Locus 使用你的真实位置，以便定位地图，并在停止模拟定位后返回当前位置。</string>
 	<key>NSLocationAlwaysAndWhenInUseUsageDescription</key>
-	<string>Locus keeps a light location session alive so simulated GPS can stay active in the background.</string>
+	<string>Locus 会保持轻量级定位会话，以便模拟 GPS 在后台继续运行。</string>
 	<key>NSLocalNetworkUsageDescription</key>
-	<string>Locus uses the local network to advertise as a pairable host (iOS 27 pairing) and to reach the developer tunnel (LocalDevVPN) for GPS override.</string>
+	<string>Locus 使用本地网络广播可配对主机（iOS 27 配对），并连接开发者隧道（LocalDevVPN）以模拟 GPS。</string>
 	<key>NSBonjourServices</key>
 	<array>
 		<string>_remotepairing._tcp</string>
@@ -64,7 +64,7 @@
 	<array>
 		<dict>
 			<key>CFBundleTypeName</key>
-			<string>Pairing File</string>
+			<string>配对文件</string>
 			<key>LSHandlerRank</key>
 			<string>Owner</string>
 			<key>LSItemContentTypes</key>
@@ -75,7 +75,7 @@
 		</dict>
 		<dict>
 			<key>CFBundleTypeName</key>
-			<string>GPX Track</string>
+			<string>GPX 轨迹</string>
 			<key>LSHandlerRank</key>
 			<string>Alternate</string>
 			<key>LSItemContentTypes</key>
@@ -93,7 +93,7 @@
 				<string>public.data</string>
 			</array>
 			<key>UTTypeDescription</key>
-			<string>Remote Pairing File</string>
+			<string>远程配对文件</string>
 			<key>UTTypeIdentifier</key>
 			<string>com.chrismack.locus.rppairing</string>
 			<key>UTTypeTagSpecification</key>

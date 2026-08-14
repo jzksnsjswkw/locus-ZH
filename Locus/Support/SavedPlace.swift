@@ -6,6 +6,11 @@ struct SavedPlace: Identifiable, Codable, Equatable {
     var name: String
     var latitude: Double
     var longitude: Double
+    var countryCode: String? = nil
+    var countryName: String? = nil
+    var countryLookupAttempted: Bool? = nil
+    var countryLookupLastAttempt: Date? = nil
+    var nameIsUserEdited: Bool? = nil
 
     var coordinate: CLLocationCoordinate2D {
         CLLocationCoordinate2D(latitude: latitude, longitude: longitude)

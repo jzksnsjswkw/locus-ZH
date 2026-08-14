@@ -108,8 +108,8 @@ final class PairOnDeviceService: ObservableObject {
     fileprivate func handleConnected() {
         phase = .deviceConnected
         Self.postPlainNotification(
-            title: "Locus connected",
-            body: "Generating pairing code…"
+            title: "Locus 已连接",
+            body: "正在生成配对代码…"
         )
     }
 
@@ -125,8 +125,8 @@ final class PairOnDeviceService: ObservableObject {
         phase = .succeeded
         teardown()
         Self.postPlainNotification(
-            title: "Locus paired",
-            body: "RPPairing is ready. Connect LocalDevVPN, then teleport."
+            title: "Locus 配对成功",
+            body: "RPPairing 已就绪。连接 LocalDevVPN 后即可模拟定位。"
         )
     }
 
@@ -166,7 +166,7 @@ final class PairOnDeviceService: ObservableObject {
 
     private static func postPINNotification(_ pin: String) {
         let content = UNMutableNotificationContent()
-        content.title = "Locus pairing code"
+        content.title = "Locus 配对代码"
         content.body = pin
         content.sound = .default
         if #available(iOS 15.0, *) {
@@ -215,7 +215,7 @@ final class PairOnDeviceService: ObservableObject {
             if let cMessage = err.pointee.message {
                 message = String(cString: cMessage)
             } else {
-                message = "Unknown pairing error (\(err.pointee.code))"
+                message = "未知配对错误（\(err.pointee.code)）"
             }
             idevice_error_free(err)
             DispatchQueue.main.async { box.owner?.handleFailure(message) }
@@ -224,7 +224,7 @@ final class PairOnDeviceService: ObservableObject {
 
         guard let outFile else {
             DispatchQueue.main.async {
-                box.owner?.handleFailure("Pairing finished but no pairing file was returned.")
+                box.owner?.handleFailure("配对已完成，但未返回配对文件。")
             }
             return
         }
@@ -242,11 +242,11 @@ final class PairOnDeviceService: ObservableObject {
             if let cMessage = writeError.pointee.message {
                 message = String(cString: cMessage)
             } else {
-                message = "Failed to write pairing file"
+                message = "无法写入配对文件"
             }
             idevice_error_free(writeError)
             DispatchQueue.main.async {
-                box.owner?.handleFailure("Paired, but failed to save file: \(message)")
+                box.owner?.handleFailure("已配对，但无法保存文件：\(message)")
             }
             return
         }

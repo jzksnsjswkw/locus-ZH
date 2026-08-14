@@ -13,14 +13,14 @@ enum LocationEngineError: LocalizedError {
 
     var errorDescription: String? {
         switch self {
-        case .invalidIP: return "Tunnel IP is invalid. Check Settings → Tunnel IP (usually 10.7.0.1)."
-        case .pairingRead: return "Could not read the RPPairing file. Generate one with idevice_pair in RPPairing mode."
-        case .tunnelCreate: return "Could not open the developer tunnel. Is LocalDevVPN connected on Wi‑Fi?"
-        case .remoteServer: return "Connected to the tunnel but RemoteXPC handshake failed."
-        case .simulationCreate: return "Could not open Apple’s location simulation service."
-        case .locationSet: return "Failed to set simulated coordinates."
-        case .locationClear: return "Failed to clear simulated location."
-        case .notActive: return "No active simulation session."
+        case .invalidIP: return "隧道 IP 无效。请检查“设置”→“隧道 IP”（通常为 10.7.0.1）。"
+        case .pairingRead: return "无法读取 RPPairing 文件。请使用 idevice_pair 的 RPPairing 模式生成该文件。"
+        case .tunnelCreate: return "无法打开开发者隧道。请确认已通过 Wi‑Fi 连接 LocalDevVPN。"
+        case .remoteServer: return "已连接隧道，但 RemoteXPC 握手失败。"
+        case .simulationCreate: return "无法打开 Apple 定位模拟服务。"
+        case .locationSet: return "无法设置模拟坐标。"
+        case .locationClear: return "无法清除模拟位置。"
+        case .notActive: return "当前没有活动的模拟定位会话。"
         }
     }
 

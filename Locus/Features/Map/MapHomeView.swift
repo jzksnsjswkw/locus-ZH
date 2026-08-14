@@ -12,6 +12,7 @@ struct MapHomeView: View {
     @State private var routeStart: CLLocationCoordinate2D?
     @State private var routeEnd: CLLocationCoordinate2D?
     @State private var routeCoords: [CLLocationCoordinate2D] = []
+    @State private var routeCameraRevision: UInt = 0
     @State private var isRouting = false
     @State private var showRouteSheet = false
     @State private var showGPXImporter = false
@@ -20,6 +21,8 @@ struct MapHomeView: View {
     @State private var pinSelected = false
     @State private var isDraggingPin = false
     @State private var suppressNextMapTap = false
+    @State private var favoriteToast: String?
+    @State private var favoriteToastTask: Task<Void, Never>?
     /// Set when the pin comes from search / a named place so starring keeps the title.
     @State private var pinPlaceName: String?
 
@@ -40,7 +43,25 @@ struct MapHomeView: View {
                 Map(position: $position) {
                     UserAnnotation()
 
-                    if let pin = session.pin {
+                    ForEach(session.favorites) { favorite in
+                        Annotation("", coordinate: favorite.coordinate) {
+                            Button {
+                                selectFavorite(favorite)
+                            } label: {
+                                Image(systemName: "star.fill")
+                                    .font(.title3.weight(.bold))
+                                    .foregroundStyle(.yellow)
+                                    .shadow(color: .black.opacity(0.45), radius: 2, y: 1)
+                                    .frame(width: 44, height: 44)
+                                    .contentShape(Rectangle())
+                            }
+                            .buttonStyle(.plain)
+                            .accessibilityLabel(session.favoriteDisplayName(favorite))
+                            .accessibilityHint("双击即可快速切换模拟位置")
+                        }
+                    }
+
+                    if let pin = session.pin, session.favorite(at: pin) == nil {
                         Annotation("", coordinate: pin, anchor: .bottom) {
                             MapDropPin(
                                 selected: pinSelected,
@@ -68,6 +89,7 @@ struct MapHomeView: View {
                                 onDragBegan: {
                                     searchFocused = false
                                     suppressNextMapTap = true
+                                    pinPlaceName = nil
                                     pinSelected = false
                                     isDraggingPin = true
                                 },
@@ -86,7 +108,7 @@ struct MapHomeView: View {
                         }
                     }
                     if let sim = session.simulated {
-                        Annotation("Spoof", coordinate: sim) {
+                        Annotation("模拟位置", coordinate: sim) {
                             ZStack {
                                 Circle().fill(LocusTheme.accent.opacity(0.25)).frame(width: 44, height: 44)
                                 Circle().fill(LocusTheme.accent).frame(width: 14, height: 14)
@@ -94,9 +116,12 @@ struct MapHomeView: View {
                             }
                         }
                     }
-                    if routeCoords.count > 1 {
+                    if routeCoords.count > 1, session.mapStyleIndex == 0 {
                         MapPolyline(coordinates: routeCoords)
-                            .stroke(LocusTheme.accent, lineWidth: 5)
+                            .stroke(
+                                LocusTheme.accent,
+                                style: StrokeStyle(lineWidth: 5, lineCap: .round, lineJoin: .round)
+                            )
                     }
                     if drawnPath.count > 1 {
                         MapPolyline(coordinates: drawnPath)
@@ -105,19 +130,49 @@ struct MapHomeView: View {
                 }
                 .mapStyle(mapStyle)
                 .mapControlVisibility(.hidden)
+                .onMapCameraChange(frequency: .continuous) { _ in
+                    guard session.mapStyleIndex != 0, routeCoords.count > 1 else { return }
+                    routeCameraRevision &+= 1
+                }
                 .onTapGesture { point in
                     searchFocused = false
                     guard !suppressNextMapTap, !isDraggingPin else { return }
                     pinSelected = false
                     placePin(at: point, proxy: proxy)
                 }
+                .overlay {
+                    if routeCoords.count > 1, session.mapStyleIndex != 0 {
+                        ScreenFixedRouteOverlay(
+                            coordinates: routeCoords,
+                            proxy: proxy,
+                            cameraRevision: routeCameraRevision
+                        )
+                    }
+                }
             }
             .background(Color.black.ignoresSafeArea())
 
             topChrome
+
+            if let favoriteToast {
+                Text(favoriteToast)
+                    .font(.subheadline.weight(.semibold))
+                    .padding(.horizontal, 14)
+                    .padding(.vertical, 9)
+                    .locusGlass(.regular, in: Capsule())
+                    .padding(.top, 154)
+                    .allowsHitTesting(false)
+                    .transition(.move(edge: .top).combined(with: .opacity))
+                    .zIndex(3)
+            }
         }
         .onAppear {
             session.startLocationUpdates()
+        }
+        .onDisappear {
+            favoriteToastTask?.cancel()
+            favoriteToastTask = nil
+            favoriteToast = nil
         }
         .onChange(of: session.pin?.latitude) { _, newValue in
             if newValue == nil { pinSelected = false }
@@ -264,12 +319,18 @@ struct MapHomeView: View {
             .foregroundStyle(drawMode ? LocusTheme.accentSecondary : .primary)
 
             if session.pin != nil {
-                chromeIconButton("star.circle") {
-                    if let pin = session.pin {
-                        let name = session.suggestedFavoriteName(for: pin, fallback: pinPlaceName)
-                        session.addFavorite(name: name, coordinate: pin)
-                    }
+                Button {
+                    toggleCurrentFavorite()
+                } label: {
+                    let isFavorite = session.pin.flatMap { session.favorite(at: $0) } != nil
+                    Image(systemName: isFavorite ? "star.fill" : "star")
+                        .font(.body.weight(.semibold))
+                        .frame(width: 44, height: 44)
+                        .contentShape(Rectangle())
                 }
+                .buttonStyle(.plain)
+                .foregroundStyle(session.pin.flatMap { session.favorite(at: $0) } == nil ? Color.primary : Color.yellow)
+                .accessibilityLabel(session.pin.flatMap { session.favorite(at: $0) } == nil ? "添加收藏" : "取消收藏")
             }
         }
         .padding(6)
@@ -333,6 +394,40 @@ struct MapHomeView: View {
         }
         .buttonStyle(.plain)
         .foregroundStyle(.primary)
+    }
+
+    private func toggleCurrentFavorite() {
+        guard let pin = session.pin else { return }
+        let name = session.suggestedFavoriteName(for: pin, fallback: pinPlaceName)
+        let result = session.toggleFavorite(name: name, coordinate: pin)
+        pinSelected = false
+        UIImpactFeedbackGenerator(style: .light).impactOccurred()
+        showFavoriteToast(result.added ? "已收藏：\(result.name)" : "已取消收藏：\(result.name)")
+    }
+
+    private func selectFavorite(_ favorite: SavedPlace) {
+        suppressNextMapTap = true
+        pinSelected = false
+        pinPlaceName = session.favoriteDisplayName(favorite)
+        session.pin = favorite.coordinate
+        session.teleport(to: favorite.coordinate, pairing: pairing)
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.15) {
+            suppressNextMapTap = false
+        }
+    }
+
+    private func showFavoriteToast(_ message: String) {
+        favoriteToastTask?.cancel()
+        withAnimation(.easeOut(duration: 0.18)) {
+            favoriteToast = message
+        }
+        favoriteToastTask = Task {
+            try? await Task.sleep(for: .seconds(1.8))
+            guard !Task.isCancelled else { return }
+            withAnimation(.easeIn(duration: 0.18)) {
+                favoriteToast = nil
+            }
+        }
     }
 
     private var searchRegion: MKCoordinateRegion {
@@ -449,6 +544,59 @@ struct MapHomeView: View {
         } catch {
             session.lastError = error.localizedDescription
         }
+    }
+}
+
+private struct ScreenFixedRouteOverlay: View {
+    let coordinates: [CLLocationCoordinate2D]
+    let proxy: MapProxy
+    let cameraRevision: UInt
+
+    var body: some View {
+        Canvas { context, _ in
+            _ = cameraRevision
+            guard coordinates.count > 1 else { return }
+
+            let maximumDisplayPoints = 2_000
+            let step = max(1, Int(ceil(Double(coordinates.count - 1) / Double(maximumDisplayPoints - 1))))
+            var path = Path()
+            var hasCurrentPoint = false
+            var lastSampledIndex = -1
+            var index = 0
+
+            while index < coordinates.count {
+                if let point = proxy.convert(coordinates[index], to: .local) {
+                    if hasCurrentPoint {
+                        path.addLine(to: point)
+                    } else {
+                        path.move(to: point)
+                        hasCurrentPoint = true
+                    }
+                } else {
+                    hasCurrentPoint = false
+                }
+                lastSampledIndex = index
+                index += step
+            }
+
+            let finalIndex = coordinates.count - 1
+            if lastSampledIndex != finalIndex,
+               let finalPoint = proxy.convert(coordinates[finalIndex], to: .local) {
+                if hasCurrentPoint {
+                    path.addLine(to: finalPoint)
+                } else {
+                    path.move(to: finalPoint)
+                }
+            }
+
+            context.stroke(
+                path,
+                with: .color(LocusTheme.accent),
+                style: StrokeStyle(lineWidth: 5, lineCap: .round, lineJoin: .round)
+            )
+        }
+        .allowsHitTesting(false)
+        .accessibilityHidden(true)
     }
 }
 

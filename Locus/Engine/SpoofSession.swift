@@ -55,9 +55,9 @@ enum SpoofStatus: Equatable {
     var label: String {
         switch self {
         case .idle: return "未模拟定位"
-        case .connecting: return "Starting…"
+        case .connecting: return "正在启动…"
         case .active: return "正在模拟定位"
-        case .reconnecting: return "Reconnecting…"
+        case .reconnecting: return "正在重新连接…"
         case .dropped: return "连接中断"
         }
     }
@@ -104,6 +104,9 @@ final class SpoofSession: ObservableObject {
 
     private let favoritesKey = "locus.favorites"
     private let recentsKey = "locus.recents"
+    private let favoriteMatchTolerance: CLLocationDistance = 8
+    private let countryLookupRetryDelay: TimeInterval = 15 * 60
+    private var countryLookupRunning = false
 
     init() {
         favorites = SavedPlace.load(key: favoritesKey)
@@ -309,22 +312,48 @@ final class SpoofSession: ObservableObject {
             .distance(from: CLLocation(latitude: end.latitude, longitude: end.longitude))
     }
 
+    func favorite(at coordinate: CLLocationCoordinate2D) -> SavedPlace? {
+        favorites.first {
+            Self.distance(from: $0.coordinate, to: coordinate) <= favoriteMatchTolerance
+        }
+    }
+
+    func favoriteDisplayName(_ place: SavedPlace) -> String {
+        if place.nameIsUserEdited == true { return place.name }
+        Self.isGenericFavoriteName(place.name) ? "收藏地点" : place.name
+    }
+
+    @discardableResult
+    func toggleFavorite(name: String, coordinate: CLLocationCoordinate2D) -> (added: Bool, name: String) {
+        if let existing = favorite(at: coordinate) {
+            let displayName = favoriteDisplayName(existing)
+            removeFavorite(existing)
+            return (false, displayName)
+        }
+        addFavorite(name: name, coordinate: coordinate)
+        return (true, favorite(at: coordinate).map(favoriteDisplayName) ?? "收藏地点")
+    }
+
     func addFavorite(name: String, coordinate: CLLocationCoordinate2D) {
         let trimmed = name.trimmingCharacters(in: .whitespacesAndNewlines)
         let place = SavedPlace(
-            name: trimmed.isEmpty ? Self.coordinateLabel(coordinate) : trimmed,
+            name: Self.isGenericFavoriteName(trimmed) ? "收藏地点" : trimmed,
             latitude: coordinate.latitude,
-            longitude: coordinate.longitude
+            longitude: coordinate.longitude,
+            nameIsUserEdited: false
         )
         // Don't let a generic star overwrite a named favorite for the same spot.
-        if let existing = favorites.first(where: { $0.id == place.id }),
+        if let existing = favorite(at: coordinate),
            Self.isGenericFavoriteName(place.name),
            !Self.isGenericFavoriteName(existing.name) {
             return
         }
-        favorites.removeAll { $0.id == place.id }
+        favorites.removeAll {
+            Self.distance(from: $0.coordinate, to: coordinate) <= favoriteMatchTolerance
+        }
         favorites.insert(place, at: 0)
         SavedPlace.save(favorites, key: favoritesKey)
+        Task { await backfillFavoriteCountries() }
     }
 
     func renameFavorite(_ place: SavedPlace, to name: String) {
@@ -332,6 +361,7 @@ final class SpoofSession: ObservableObject {
         guard !trimmed.isEmpty,
               let index = favorites.firstIndex(where: { $0.id == place.id }) else { return }
         favorites[index].name = trimmed
+        favorites[index].nameIsUserEdited = true
         SavedPlace.save(favorites, key: favoritesKey)
     }
 
@@ -345,12 +375,96 @@ final class SpoofSession: ObservableObject {
         SavedPlace.save(recents, key: recentsKey)
     }
 
+    func backfillFavoriteCountries() async {
+        guard !countryLookupRunning else { return }
+        countryLookupRunning = true
+        defer { countryLookupRunning = false }
+
+        while !Task.isCancelled,
+              let favorite = favorites.first(where: { shouldLookupCountry(for: $0) }) {
+            let canContinue = await resolveFavoriteMetadata(for: favorite.id)
+            guard canContinue, !Task.isCancelled else { return }
+            try? await Task.sleep(for: .seconds(1))
+        }
+    }
+
+    private func shouldLookupCountry(for favorite: SavedPlace) -> Bool {
+        guard favorite.countryName == nil else { return false }
+        guard let lastAttempt = favorite.countryLookupLastAttempt else { return true }
+        return Date().timeIntervalSince(lastAttempt) >= countryLookupRetryDelay
+    }
+
+    /// Returns false after a transient failure so the queue does not hammer the service.
+    private func resolveFavoriteMetadata(for favoriteID: String) async -> Bool {
+        guard let index = favorites.firstIndex(where: { $0.id == favoriteID }),
+              shouldLookupCountry(for: favorites[index]) else { return true }
+
+        favorites[index].countryLookupLastAttempt = Date()
+        favorites[index].countryLookupAttempted = false
+        SavedPlace.save(favorites, key: favoritesKey)
+
+        let favorite = favorites[index]
+        let mapCoordinate = favorite.coordinate
+        let systemCoordinate = ChinaCoordinateTransform.mapCoordinateToSystemCoordinate(mapCoordinate)
+        let location = CLLocation(latitude: systemCoordinate.latitude, longitude: systemCoordinate.longitude)
+
+        do {
+            let geocoder = CLGeocoder()
+            let placemarks = try await geocoder.reverseGeocodeLocation(
+                location,
+                preferredLocale: Locale(identifier: "zh_Hans_CN")
+            )
+            guard let placemark = placemarks.first else {
+                markCountryLookupFailed(for: favoriteID)
+                return true
+            }
+            guard let index = favorites.firstIndex(where: { $0.id == favoriteID }) else { return true }
+            let countryCode = placemark.isoCountryCode
+            let localizedCountry = countryCode.flatMap {
+                Locale(identifier: "zh_Hans_CN").localizedString(forRegionCode: $0)
+            }
+            favorites[index].countryCode = countryCode
+            favorites[index].countryName = localizedCountry ?? placemark.country
+            favorites[index].countryLookupAttempted = true
+
+            if favorites[index].nameIsUserEdited != true,
+               Self.isGenericFavoriteName(favorites[index].name) {
+                let resolvedName = [placemark.name, placemark.subLocality, placemark.locality]
+                    .compactMap { $0?.trimmingCharacters(in: .whitespacesAndNewlines) }
+                    .first { !$0.isEmpty }
+                favorites[index].name = resolvedName ?? "收藏地点"
+            }
+            SavedPlace.save(favorites, key: favoritesKey)
+            return true
+        } catch {
+            if Task.isCancelled {
+                clearCancelledCountryLookup(for: favoriteID)
+                return false
+            }
+            markCountryLookupFailed(for: favoriteID)
+            return false
+        }
+    }
+
+    private func clearCancelledCountryLookup(for favoriteID: String) {
+        guard let index = favorites.firstIndex(where: { $0.id == favoriteID }) else { return }
+        favorites[index].countryLookupLastAttempt = nil
+        favorites[index].countryLookupAttempted = nil
+        SavedPlace.save(favorites, key: favoritesKey)
+    }
+
+    private func markCountryLookupFailed(for favoriteID: String) {
+        guard let index = favorites.firstIndex(where: { $0.id == favoriteID }) else { return }
+        favorites[index].countryLookupAttempted = false
+        SavedPlace.save(favorites, key: favoritesKey)
+    }
+
     /// Best display name for starring the current pin (search title, matching recent, etc.).
     func suggestedFavoriteName(for coordinate: CLLocationCoordinate2D, fallback: String? = nil) -> String {
         if let fallback, !fallback.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
             return fallback.trimmingCharacters(in: .whitespacesAndNewlines)
         }
-        if let favorite = favorites.first(where: { $0.id == SavedPlace(name: "", latitude: coordinate.latitude, longitude: coordinate.longitude).id }),
+        if let favorite = favorite(at: coordinate),
            !Self.isGenericFavoriteName(favorite.name) {
             return favorite.name
         }
@@ -359,7 +473,7 @@ final class SpoofSession: ObservableObject {
         }), !Self.isGenericFavoriteName(recent.name) {
             return recent.name
         }
-        return Self.coordinateLabel(coordinate)
+        return "收藏地点"
     }
 
     private static func coordinateLabel(_ coordinate: CLLocationCoordinate2D) -> String {
@@ -368,7 +482,7 @@ final class SpoofSession: ObservableObject {
 
     private static func isGenericFavoriteName(_ name: String) -> Bool {
         let trimmed = name.trimmingCharacters(in: .whitespacesAndNewlines)
-        if trimmed.isEmpty || trimmed == "Favorite" { return true }
+        if trimmed.isEmpty || trimmed == "Favorite" || trimmed == "收藏地点" { return true }
         // Coordinate-looking labels from older teleports.
         let parts = trimmed.split(separator: ",")
         if parts.count == 2,
@@ -382,7 +496,7 @@ final class SpoofSession: ObservableObject {
     private func apply(_ coordinate: CLLocationCoordinate2D, pairing: PairingStore, markRecent: Bool) {
         guard CLLocationCoordinate2DIsValid(coordinate),
               coordinate.latitude.isFinite, coordinate.longitude.isFinite else {
-            lastError = "The selected map coordinate is invalid. Please drop the pin again."
+            lastError = "所选地图坐标无效，请重新放置图钉。"
             return
         }
         if status == .idle || status.isDropped {
@@ -514,7 +628,7 @@ final class SpoofSession: ObservableObject {
     private func postDropNotification(_ message: String) {
         UNUserNotificationCenter.current().requestAuthorization(options: [.alert, .sound]) { _, _ in }
         let content = UNMutableNotificationContent()
-        content.title = "Locus spoof dropped"
+        content.title = "Locus 模拟定位已断开"
         content.body = message
         content.sound = .default
         let request = UNNotificationRequest(identifier: UUID().uuidString, content: content, trigger: nil)

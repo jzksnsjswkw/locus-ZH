@@ -33,12 +33,17 @@ enum LocalDevVPN {
         UIApplication.shared.open(appStoreURL)
     }
 
-    /// Open LocalDevVPN to connect if installed; otherwise App Store.
+    /// Try both public LocalDevVPN entry points before falling back to the App Store.
     static func openOrInstall() {
-        if isInstalled {
-            openInstalled()
-        } else {
-            openAppStore()
+        UIApplication.shared.open(enableURL, options: [:]) { openedEnableURL in
+            NSLog("[Locus] LocalDevVPN enable URL opened: %@", openedEnableURL.description)
+            guard !openedEnableURL else { return }
+
+            UIApplication.shared.open(detectURL, options: [:]) { openedBaseURL in
+                NSLog("[Locus] LocalDevVPN base URL opened: %@", openedBaseURL.description)
+                guard !openedBaseURL else { return }
+                openAppStore()
+            }
         }
     }
 

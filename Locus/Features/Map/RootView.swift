@@ -164,7 +164,7 @@ struct BottomControlsView: View {
     private let trayShape = RoundedRectangle(cornerRadius: 28, style: .continuous)
 
     var body: some View {
-        VStack(spacing: 12) {
+        VStack(alignment: .trailing, spacing: 12) {
             if session.joystickActive {
                 JoystickPad { vector in
                     session.updateJoystick(vector: vector)
@@ -173,138 +173,142 @@ struct BottomControlsView: View {
                 .frame(maxWidth: .infinity, alignment: .trailing)
             }
 
-            if session.routeActive || session.routePaused {
-                VStack(spacing: 8) {
-                    HStack(spacing: 10) {
-                        Button { session.adjustSpeed(by: -0.25) } label: {
-                            Label("减速", systemImage: "minus.circle.fill")
+            VStack(spacing: 12) {
+                if session.routeActive || session.routePaused {
+                    VStack(spacing: 8) {
+                        HStack(spacing: 10) {
+                            Button { session.adjustSpeed(by: -0.25) } label: {
+                                Label("减速", systemImage: "minus.circle.fill")
+                            }
+                            .disabled(session.speedMultiplier <= 0.25)
+
+                            Spacer()
+                            VStack(spacing: 2) {
+                                Text(String(format: "%.2fx · %.1f km/h", session.speedMultiplier, session.travelMode.baseSpeed * session.speedMultiplier * 3.6))
+                                    .font(.subheadline.bold())
+                                    .monospacedDigit()
+                                Text("第 \(max(1, session.routeLap)) 圈 · \(Int(session.routeProgress * 100))%")
+                                    .font(.caption.monospacedDigit())
+                                    .foregroundStyle(.secondary)
+                            }
+                            Spacer()
+
+                            Button { session.adjustSpeed(by: 0.25) } label: {
+                                Label("加速", systemImage: "plus.circle.fill")
+                            }
+                            .disabled(session.speedMultiplier >= 4.0)
                         }
-                        .disabled(session.speedMultiplier <= 0.25)
+                        .buttonStyle(.borderless)
 
-                        Spacer()
-                        VStack(spacing: 2) {
-                            Text(String(format: "%.2fx · %.1f 公里/小时", session.speedMultiplier, session.travelMode.baseSpeed * session.speedMultiplier * 3.6))
-                                .font(.subheadline.bold())
-                                .monospacedDigit()
-                            Text("第 \(max(1, session.routeLap)) 圈 · \(Int(session.routeProgress * 100))%")
-                                .font(.caption.monospacedDigit())
-                                .foregroundStyle(.secondary)
-                        }
-                        Spacer()
-
-                        Button { session.adjustSpeed(by: 0.25) } label: {
-                            Label("加速", systemImage: "plus.circle.fill")
-                        }
-                        .disabled(session.speedMultiplier >= 4.0)
+                        ProgressView(value: session.routeProgress)
+                            .tint(LocusTheme.accent)
                     }
-                    .buttonStyle(.borderless)
-
-                    ProgressView(value: session.routeProgress)
-                        .tint(LocusTheme.accent)
+                    .padding(.horizontal, 4)
                 }
-                .padding(.horizontal, 4)
-            }
 
-            HStack(spacing: 8) {
-                ForEach(TravelMode.allCases) { mode in
-                    let selected = session.travelMode == mode
-                    Button {
-                        session.travelMode = mode
-                    } label: {
-                        Image(systemName: mode.icon)
-                            .font(.body.weight(.semibold))
-                            .foregroundStyle(selected ? .black : .primary)
-                            .frame(width: 44, height: 40)
-                            .background(
-                                Capsule().fill(selected ? LocusTheme.accent : Color.primary.opacity(0.08))
-                            )
-                            .contentShape(Capsule())
-                    }
-                    .buttonStyle(.plain)
-                }
-                Spacer(minLength: 0)
-            }
-
-            HStack(spacing: 10) {
-                trayIcon("gearshape.fill") { showSettings = true }
-                trayIcon("star.fill") { showPlaces = true }
-
-                Button {
-                    if session.joystickActive {
-                        session.stopJoystick()
-                    } else {
-                        session.startJoystick(pairing: pairing)
-                    }
-                } label: {
-                    HStack(spacing: 6) {
-                        Image(systemName: "dot.circle.and.hand.point.up.left.fill")
-                        Text(session.joystickActive ? "摇杆开启" : "摇杆")
-                            .lineLimit(1)
-                    }
-                    .font(.subheadline.weight(.semibold))
-                    .foregroundStyle(session.joystickActive ? .black : .primary)
-                    .frame(maxWidth: .infinity)
-                    .padding(.vertical, 12)
-                    .background(
-                        Capsule().fill(session.joystickActive ? LocusTheme.accentSecondary : Color.primary.opacity(0.08))
-                    )
-                    .contentShape(Capsule())
-                }
-                .buttonStyle(.plain)
-
-                if session.isSpoofing {
-                    if session.canResumeRoute {
+                HStack(spacing: 8) {
+                    ForEach(TravelMode.allCases) { mode in
+                        let selected = session.travelMode == mode
                         Button {
-                            session.resumeRoute(pairing: pairing)
+                            session.travelMode = mode
                         } label: {
-                            Image(systemName: "play.fill")
-                                .font(.body.bold())
-                                .foregroundStyle(.black)
-                                .frame(width: 46, height: 46)
-                                .background(Circle().fill(LocusTheme.accent))
+                            Image(systemName: mode.icon)
+                                .font(.body.weight(.semibold))
+                                .foregroundStyle(selected ? .black : .primary)
+                                .frame(width: 44, height: 40)
+                                .background(
+                                    Capsule().fill(selected ? LocusTheme.accent : Color.primary.opacity(0.08))
+                                )
+                                .contentShape(Capsule())
                         }
                         .buttonStyle(.plain)
-                        .accessibilityLabel("继续轨迹")
                     }
+                    Spacer(minLength: 0)
+                }
+
+                HStack(spacing: 10) {
+                    trayIcon("gearshape.fill") { showSettings = true }
+                    trayIcon("star.fill") { showPlaces = true }
+
                     Button {
-                        session.stop(pairing: pairing)
-                    } label: {
-                        Text(session.isMoving ? "暂停" : "停止定位")
-                            .font(.subheadline.weight(.bold))
-                            .foregroundStyle(.white)
-                            .frame(minWidth: 72)
-                            .padding(.vertical, 12)
-                            .padding(.horizontal, 8)
-                            .background(Capsule().fill(LocusTheme.danger))
-                            .contentShape(Capsule())
-                    }
-                    .buttonStyle(.plain)
-                } else {
-                    Button {
-                        guard let pin = session.pin else {
-                            session.lastError = "请先点击地图放置图钉。"
-                            return
+                        if session.joystickActive {
+                            session.stopJoystick()
+                        } else {
+                            session.startJoystick(pairing: pairing)
                         }
-                        session.teleport(to: pin, pairing: pairing)
                     } label: {
-                        Text("开始定位")
-                            .font(.subheadline.weight(.bold))
-                            .foregroundStyle(.black)
-                            .frame(minWidth: 96)
-                            .padding(.vertical, 12)
-                            .padding(.horizontal, 10)
-                            .background(Capsule().fill(LocusTheme.accent))
-                            .contentShape(Capsule())
+                        HStack(spacing: 6) {
+                            Image(systemName: "dot.circle.and.hand.point.up.left.fill")
+                            Text(session.joystickActive ? "摇杆开启" : "摇杆")
+                                .lineLimit(1)
+                        }
+                        .font(.subheadline.weight(.semibold))
+                        .foregroundStyle(session.joystickActive ? .black : .primary)
+                        .frame(maxWidth: .infinity)
+                        .padding(.vertical, 12)
+                        .background(
+                            Capsule().fill(session.joystickActive ? LocusTheme.accentSecondary : Color.primary.opacity(0.08))
+                        )
+                        .contentShape(Capsule())
                     }
                     .buttonStyle(.plain)
-                    .disabled(session.isBusy)
+
+                    if session.isSpoofing {
+                        if session.canResumeRoute {
+                            Button {
+                                session.resumeRoute(pairing: pairing)
+                            } label: {
+                                Image(systemName: "play.fill")
+                                    .font(.body.bold())
+                                    .foregroundStyle(.black)
+                                    .frame(width: 46, height: 46)
+                                    .background(Circle().fill(LocusTheme.accent))
+                            }
+                            .buttonStyle(.plain)
+                            .accessibilityLabel("继续轨迹")
+                        }
+                        Button {
+                            session.stop(pairing: pairing)
+                        } label: {
+                            Text(session.isMoving ? "暂停" : "停止定位")
+                                .font(.subheadline.weight(.bold))
+                                .foregroundStyle(.white)
+                                .frame(minWidth: 72)
+                                .padding(.vertical, 12)
+                                .padding(.horizontal, 8)
+                                .background(Capsule().fill(LocusTheme.danger))
+                                .contentShape(Capsule())
+                        }
+                        .buttonStyle(.plain)
+                    } else {
+                        Button {
+                            guard let pin = session.pin else {
+                                session.lastError = "请先点击地图放置图钉。"
+                                return
+                            }
+                            session.teleport(to: pin, pairing: pairing)
+                        } label: {
+                            Text("开始定位")
+                                .font(.subheadline.weight(.bold))
+                                .foregroundStyle(.black)
+                                .frame(minWidth: 96)
+                                .padding(.vertical, 12)
+                                .padding(.horizontal, 10)
+                                .background(Capsule().fill(LocusTheme.accent))
+                                .contentShape(Capsule())
+                        }
+                        .buttonStyle(.plain)
+                        .disabled(session.isBusy)
+                    }
                 }
             }
+            .padding(14)
+            .locusGlass(.regular, in: trayShape)
+            // Only the fixed controls participate in the glass tray's layout.
+            .contentShape(trayShape)
         }
-        .padding(14)
-        .locusGlass(.regular, in: trayShape)
-        // Whole tray absorbs taps so near-misses don't fall through to the map.
-        .contentShape(trayShape)
+        .frame(maxWidth: .infinity, alignment: .trailing)
+        .animation(.easeOut(duration: 0.18), value: session.joystickActive)
     }
 
     private func trayIcon(_ systemName: String, action: @escaping () -> Void) -> some View {

@@ -97,7 +97,7 @@ enum GPXCodec {
             }
         }
         guard !coords.isEmpty else {
-            throw NSError(domain: "Locus", code: 2, userInfo: [NSLocalizedDescriptionKey: "No track points found in GPX"])
+            throw NSError(domain: "Locus", code: 2, userInfo: [NSLocalizedDescriptionKey: "GPX 中未找到轨迹点"])
         }
         return coords
     }

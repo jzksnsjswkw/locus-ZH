@@ -13,6 +13,8 @@ actor LocusLiveActivityController {
     private var lastGeocodeAttempt: Date?
     private var lastPublishedAt: Date?
     private var lastPublishedStatus: String?
+    private var registrationBlocked = false
+    private var regionLookupTask: Task<Void, Never>?
     private var city = "正在获取位置"
     private var country = ""
 
@@ -21,12 +23,14 @@ actor LocusLiveActivityController {
         status: String,
         coordinate: CLLocationCoordinate2D?,
         distanceTraveled: CLLocationDistance,
-        elapsedTime: TimeInterval
+        elapsedTime: TimeInterval,
+        allowRegionLookup: Bool
     ) async {
         let storedPreference = UserDefaults.standard.object(forKey: Self.enabledKey) as? Bool
         let isEnabled = storedPreference ?? true
         guard isEnabled else {
             await end()
+            registrationBlocked = false
             recordStatus("已关闭")
             return
         }
@@ -39,6 +43,15 @@ actor LocusLiveActivityController {
             await end()
             recordStatus("系统未允许实时活动")
             return
+        }
+        guard !registrationBlocked else {
+            recordStatus("LiveContainer 未向系统注册实时活动扩展")
+            return
+        }
+        if !allowRegionLookup {
+            regionLookupTask?.cancel()
+            regionLookupTask = nil
+            geocoder.cancelGeocode()
         }
 
         if currentActivity == nil {
@@ -53,11 +66,13 @@ actor LocusLiveActivityController {
             return
         }
 
-        let location = CLLocation(latitude: coordinate.latitude, longitude: coordinate.longitude)
-        if shouldReverseGeocode(location) {
+        let lookupCoordinate = ChinaCoordinateTransform.mapCoordinateToSystemCoordinate(coordinate)
+        let location = CLLocation(latitude: lookupCoordinate.latitude, longitude: lookupCoordinate.longitude)
+        if allowRegionLookup, shouldReverseGeocode(location) {
             // Region text is secondary: never delay creation or metric updates while
             // Apple reverse geocoding is slow, offline, or rate-limited.
-            Task { await reverseGeocode(location) }
+            regionLookupTask?.cancel()
+            regionLookupTask = Task { await reverseGeocode(location) }
         }
 
         let state = LocusActivityAttributes.ContentState(
@@ -88,8 +103,14 @@ actor LocusLiveActivityController {
             lastPublishedStatus = status
             recordStatus("运行中")
         } catch {
-            recordStatus("启动失败：\(error.localizedDescription)")
-            NSLog("[Locus] Live Activity start failed: %@", error.localizedDescription)
+            let message = error.localizedDescription
+            if message.localizedCaseInsensitiveContains("NSSupportsLiveActivities") {
+                registrationBlocked = true
+                recordStatus("LiveContainer 未向系统注册实时活动扩展")
+            } else {
+                recordStatus("启动失败：\(message)")
+            }
+            NSLog("[Locus] Live Activity start failed: %@", message)
         }
     }
 
@@ -106,9 +127,11 @@ actor LocusLiveActivityController {
         lastGeocodeAttempt = Date()
         do {
             let placemark = try await geocoder.reverseGeocodeLocation(location).first
+            guard !Task.isCancelled else { return }
             city = placemark?.locality ?? placemark?.administrativeArea ?? "未知城市"
             country = placemark?.country ?? "未知国家"
         } catch {
+            guard !Task.isCancelled else { return }
             city = "未知城市"
             country = "未知国家"
         }
@@ -138,6 +161,9 @@ actor LocusLiveActivityController {
             await activity.end(nil, dismissalPolicy: .immediate)
         }
         currentActivity = nil
+        regionLookupTask?.cancel()
+        regionLookupTask = nil
+        geocoder.cancelGeocode()
         lastPublishedAt = nil
         lastPublishedStatus = nil
     }

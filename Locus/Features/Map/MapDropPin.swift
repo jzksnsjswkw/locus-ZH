@@ -111,7 +111,7 @@ struct MapDropPin: View {
                     if draggingFromLongPress {
                         onDragEnded()
                     } else {
-                        UIImpactFeedbackGenerator(style: .light).impactOccurred()
+                        UIImpactFeedbackGenerator(style: .medium).impactOccurred()
                         onShowExpandedActions()
                     }
                     DispatchQueue.main.asyncAfter(deadline: .now() + 0.25) {

@@ -1,9 +1,13 @@
 import SwiftUI
+import UIKit
 
 struct RoutePlannerSheet: View {
     var onPlay: () -> Void
     var onImportGPX: () -> Void
     var onExportGPX: () -> Void
+    var drawMode: Bool
+    var hasDrawnPath: Bool
+    var onToggleDrawing: () -> Void
     var onUseDrawn: () -> Void
 
     @EnvironmentObject private var session: SpoofSession
@@ -12,7 +16,31 @@ struct RoutePlannerSheet: View {
     var body: some View {
         NavigationStack {
             List {
-                Section("轨迹运行") {
+                Section("交通方式与速度") {
+                    HStack(spacing: 6) {
+                        ForEach(TravelMode.allCases) { mode in
+                            let selected = session.travelMode == mode
+                            Button {
+                                session.travelMode = mode
+                                session.speedMultiplier = 1.0
+                                UISelectionFeedbackGenerator().selectionChanged()
+                            } label: {
+                                VStack(spacing: 4) {
+                                    Image(systemName: mode.icon)
+                                        .font(.body.weight(.semibold))
+                                    Text(mode.title)
+                                        .font(.caption2.weight(.semibold))
+                                }
+                                .foregroundStyle(selected ? .black : .primary)
+                                .frame(maxWidth: .infinity)
+                                .frame(height: 48)
+                                .background(Capsule().fill(selected ? LocusTheme.accent : Color.primary.opacity(0.08)))
+                                .contentShape(Capsule())
+                            }
+                            .buttonStyle(.plain)
+                        }
+                    }
+
                     HStack {
                         Label("速度", systemImage: "speedometer")
                         Spacer()
@@ -21,17 +49,34 @@ struct RoutePlannerSheet: View {
                             .foregroundStyle(.secondary)
                     }
                     Slider(value: $session.speedMultiplier, in: 0.25...4.0, step: 0.25)
+                    Text("选择交通方式会恢复该方式的默认速度，再使用滑块微调。")
+                        .font(.footnote)
+                        .foregroundStyle(.secondary)
                     Toggle(isOn: $session.routeLoopEnabled) {
                         Label("循环运行轨迹", systemImage: "repeat")
                     }
                 }
 
-                Section("运行、手绘与 GPX") {
+                Section("地图手绘") {
+                    Button {
+                        onToggleDrawing()
+                        dismiss()
+                    } label: {
+                        Label(
+                            drawMode ? "结束地图手绘" : "开始地图手绘",
+                            systemImage: drawMode ? "pencil.tip.crop.circle.badge.minus" : "pencil.tip.crop.circle"
+                        )
+                    }
+
                     Button {
                         onUseDrawn()
                     } label: {
-                        Label("使用地图上手绘的轨迹", systemImage: "pencil.tip")
+                        Label("将手绘线设为当前轨迹", systemImage: "pencil.tip")
                     }
+                    .disabled(!hasDrawnPath)
+                }
+
+                Section("运行与 GPX") {
                     Button(action: onPlay) {
                         Label("开始运行轨迹", systemImage: "play.fill")
                     }

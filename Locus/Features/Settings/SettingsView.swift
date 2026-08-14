@@ -38,6 +38,13 @@ struct SettingsView: View {
         Bundle.main.object(forInfoDictionaryKey: "NSSupportsLiveActivities") as? Bool == true
     }
 
+    private var displayedCoordinate: String {
+        guard let coordinate = session.simulated ?? session.pin ?? session.realMapCoordinate else {
+            return "暂无坐标"
+        }
+        return String(format: "%.4f, %.4f", coordinate.latitude, coordinate.longitude)
+    }
+
     var body: some View {
         NavigationStack {
             List {
@@ -138,7 +145,7 @@ struct SettingsView: View {
                 } header: {
                     Text("实时状态")
                 } footer: {
-                    Text("模拟定位时在灵动岛和锁定屏幕优先显示轨迹已行驶里程与实际运行时间，所在地区作为辅助信息，每 10 秒更新一次。灵动岛仅适用于支持机型；LiveContainer 必须同时保留主应用声明并注册实时活动扩展。")
+                    Text("模拟定位时在灵动岛和锁定屏幕优先显示轨迹已行驶里程与实际运行时间，所在地区作为辅助信息，每 10 秒更新一次。轨迹运行或暂停期间不重新查询地区。独立安装可注册实时活动扩展；标准 LiveContainer 目前不会为客体 App 注册自定义 App Extension，因此即使 IPA 已包含声明与扩展文件，系统仍可能拒绝启动。")
                 }
 
                 Section("隐私") {
@@ -170,6 +177,20 @@ struct SettingsView: View {
                     .listRowBackground(Color.clear)
                     .listRowSeparator(.hidden)
                 }
+            }
+            .safeAreaInset(edge: .top, spacing: 0) {
+                HStack {
+                    Spacer(minLength: 0)
+                    Text(displayedCoordinate)
+                        .font(.caption2.monospacedDigit())
+                        .foregroundStyle(.secondary)
+                        .lineLimit(1)
+                        .padding(.horizontal, 10)
+                        .padding(.vertical, 5)
+                        .background(.thinMaterial, in: Capsule())
+                }
+                .padding(.horizontal, 16)
+                .padding(.top, 4)
             }
             .navigationTitle("设置")
             .toolbar {
@@ -216,7 +237,8 @@ struct SettingsView: View {
                         status: session.status.label,
                         coordinate: session.simulated,
                         distanceTraveled: session.routeDistanceTraveled,
-                        elapsedTime: session.routeElapsedTime
+                        elapsedTime: session.routeElapsedTime,
+                        allowRegionLookup: !session.routeActive && !session.routePaused
                     )
                 }
             }

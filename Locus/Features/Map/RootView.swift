@@ -1,12 +1,13 @@
 import SwiftUI
 import NetworkExtension
+import CoreLocation
 import UIKit
 
 enum MapChromeLayout {
     static let horizontalPadding: CGFloat = 16
     static let spacing: CGFloat = 10
-    static let primaryHeight: CGFloat = 56
-    static let rightColumnWidth: CGFloat = 56
+    static let primaryHeight: CGFloat = 64
+    static let rightColumnWidth: CGFloat = 64
     static let bottomPadding: CGFloat = 8
     static let rightRailClearance = bottomPadding + primaryHeight + spacing
 }
@@ -21,7 +22,7 @@ struct RootView: View {
     @State private var favoriteRenameText = ""
     @State private var favoriteRenameTask: Task<Void, Never>?
     @State private var searchPresented = false
-    @State private var showTravelModes = false
+    @State private var showRouteSheet = false
 
     var body: some View {
         // Bottom chrome is a sibling overlay aligned to the bottom — no full-screen
@@ -31,7 +32,7 @@ struct RootView: View {
                 showPlaces: $showPlaces,
                 favoriteRenameSuggestion: $favoriteRenameSuggestion,
                 searchPresented: $searchPresented,
-                showTravelModes: $showTravelModes
+                showRouteSheet: $showRouteSheet
             )
 
             VStack(spacing: 10) {
@@ -45,10 +46,10 @@ struct RootView: View {
                     HStack(alignment: .bottom, spacing: 10) {
                         BottomControlsView(
                             showSettings: $showSettings,
-                            showTravelModes: $showTravelModes
+                            showRouteSheet: $showRouteSheet
                         )
 
-                        searchButton
+                        locationButton
                     }
                     .transition(.move(edge: .bottom).combined(with: .opacity))
                 }
@@ -107,7 +108,6 @@ struct RootView: View {
     private func renameSuggestionButton(_ favorite: SavedPlace) -> some View {
         Button {
             favoriteRenameTask?.cancel()
-            showTravelModes = false
             let current = session.favorites.first(where: { $0.id == favorite.id }) ?? favorite
             favoriteRenameText = session.favoriteDisplayName(current)
             favoriteToRename = current
@@ -127,14 +127,12 @@ struct RootView: View {
         .accessibilityHint("两秒内轻点即可自定义收藏名称")
     }
 
-    private var searchButton: some View {
+    private var locationButton: some View {
         Button {
-            withAnimation(.spring(response: 0.32, dampingFraction: 0.84)) {
-                showTravelModes = false
-                searchPresented = true
-            }
+            UISelectionFeedbackGenerator().selectionChanged()
+            NotificationCenter.default.post(name: .locusLocateCurrent, object: nil)
         } label: {
-            Image(systemName: "magnifyingglass")
+            Image(systemName: "location.fill")
                 .font(.title2.weight(.semibold))
                 .frame(
                     width: MapChromeLayout.rightColumnWidth,
@@ -145,7 +143,9 @@ struct RootView: View {
         .buttonStyle(.plain)
         .locusGlass(.interactive, in: Circle())
         .foregroundStyle(.primary)
-        .accessibilityLabel("搜索地点")
+        .opacity(session.joystickActive ? 0 : 1)
+        .allowsHitTesting(!session.joystickActive)
+        .accessibilityLabel("回到当前位置")
     }
 }
 
@@ -153,6 +153,7 @@ struct StatusBarView: View {
     @EnvironmentObject private var session: SpoofSession
     @Environment(\.scenePhase) private var scenePhase
 
+    @StateObject private var locationSummary = MapLocationSummary()
     @State private var tunnelConnected = LocalDevVPN.isConnected
 
     private enum Display {
@@ -214,6 +215,7 @@ struct StatusBarView: View {
         .onAppear {
             refreshTunnel()
             syncLiveActivity()
+            updateLocationSummary()
         }
         .onChange(of: scenePhase) { _, phase in
             if phase == .active { refreshTunnel() }
@@ -222,11 +224,35 @@ struct StatusBarView: View {
             refreshTunnel()
             syncLiveActivity()
         }
+        .onChange(of: session.routeActive) { _, active in
+            if active {
+                locationSummary.suspend()
+            } else if !session.routePaused {
+                updateLocationSummary()
+            }
+            syncLiveActivity()
+        }
+        .onChange(of: session.routePaused) { _, paused in
+            if paused {
+                locationSummary.suspend()
+            } else if !session.routeActive {
+                updateLocationSummary()
+            }
+            syncLiveActivity()
+        }
         .onChange(of: session.simulated?.latitude) { _, _ in
             syncLiveActivity()
+            updateLocationSummary()
         }
         .onChange(of: session.simulated?.longitude) { _, _ in
             syncLiveActivity()
+            updateLocationSummary()
+        }
+        .onChange(of: session.pin?.latitude) { _, _ in
+            updateLocationSummary()
+        }
+        .onChange(of: session.pin?.longitude) { _, _ in
+            updateLocationSummary()
         }
         .onReceive(NotificationCenter.default.publisher(for: .NEVPNStatusDidChange)) { _ in
             // LocalDevVPN connection changes show up here even though we don’t own the VPN.
@@ -261,9 +287,9 @@ struct StatusBarView: View {
                 }
             }
 
-            if case .active = session.status, let sim = session.simulated {
-                Text(String(format: "%.4f, %.4f", sim.latitude, sim.longitude))
-                    .font(.caption.monospaced())
+            if locationSummaryCoordinate != nil {
+                Text(locationSummary.text)
+                    .font(.caption)
                     .foregroundStyle(.secondary)
                     .lineLimit(1)
             }
@@ -278,6 +304,16 @@ struct StatusBarView: View {
         tunnelConnected = LocalDevVPN.isConnected
     }
 
+    private var locationSummaryCoordinate: CLLocationCoordinate2D? {
+        session.simulated ?? session.pin ?? session.realMapCoordinate
+    }
+
+    private func updateLocationSummary() {
+        guard !session.routeActive, !session.routePaused else { return }
+        guard let coordinate = locationSummaryCoordinate else { return }
+        locationSummary.requestUpdate(to: coordinate)
+    }
+
     private func syncLiveActivity() {
         let isActive = session.isSpoofing
         let status = title
@@ -288,8 +324,64 @@ struct StatusBarView: View {
                 status: status,
                 coordinate: coordinate,
                 distanceTraveled: session.routeDistanceTraveled,
-                elapsedTime: session.routeElapsedTime
+                elapsedTime: session.routeElapsedTime,
+                allowRegionLookup: !session.routeActive && !session.routePaused
             )
+        }
+    }
+}
+
+@MainActor
+private final class MapLocationSummary: ObservableObject {
+    @Published private(set) var text = "正在获取地区"
+
+    private let geocoder = CLGeocoder()
+    private var lastAttemptLocation: CLLocation?
+    private var lastAttemptAt: Date?
+    private var lookupTask: Task<Void, Never>?
+
+    func suspend() {
+        lookupTask?.cancel()
+        lookupTask = nil
+        geocoder.cancelGeocode()
+    }
+
+    func requestUpdate(to coordinate: CLLocationCoordinate2D) {
+        let lookupCoordinate = ChinaCoordinateTransform.mapCoordinateToSystemCoordinate(coordinate)
+        let location = CLLocation(latitude: lookupCoordinate.latitude, longitude: lookupCoordinate.longitude)
+        if let lastAttemptLocation,
+           let lastAttemptAt,
+           location.distance(from: lastAttemptLocation) < 2_000,
+           Date().timeIntervalSince(lastAttemptAt) < 300 {
+            return
+        }
+
+        lastAttemptLocation = location
+        lastAttemptAt = Date()
+        lookupTask?.cancel()
+        geocoder.cancelGeocode()
+
+        lookupTask = Task { [weak self] in
+            guard let self else { return }
+            do {
+                let placemark = try await self.geocoder.reverseGeocodeLocation(location).first
+                guard !Task.isCancelled else { return }
+                let country = placemark?.country?.trimmingCharacters(in: .whitespacesAndNewlines)
+                let city = (placemark?.locality ?? placemark?.administrativeArea)?
+                    .trimmingCharacters(in: .whitespacesAndNewlines)
+                let parts = [country, city]
+                    .compactMap { value -> String? in
+                        guard let value, !value.isEmpty else { return nil }
+                        return value
+                    }
+                    .reduce(into: [String]()) { result, value in
+                        if result.last != value { result.append(value) }
+                    }
+                self.text = parts.isEmpty ? "未知地区" : parts.joined(separator: " ")
+            } catch {
+                guard !Task.isCancelled, self.text == "正在获取地区" else { return }
+                self.text = "未知地区"
+            }
         }
     }
 }
@@ -298,7 +390,7 @@ struct BottomControlsView: View {
     @EnvironmentObject private var session: SpoofSession
     @EnvironmentObject private var pairing: PairingStore
     @Binding var showSettings: Bool
-    @Binding var showTravelModes: Bool
+    @Binding var showRouteSheet: Bool
 
     private let trayShape = RoundedRectangle(cornerRadius: 28, style: .continuous)
 
@@ -308,7 +400,6 @@ struct BottomControlsView: View {
                     VStack(spacing: 8) {
                         HStack(spacing: 10) {
                             Button {
-                                showTravelModes = false
                                 session.adjustSpeed(by: -0.25)
                             } label: {
                                 Label("减速", systemImage: "minus.circle.fill")
@@ -327,7 +418,6 @@ struct BottomControlsView: View {
                             Spacer()
 
                             Button {
-                                showTravelModes = false
                                 session.adjustSpeed(by: 0.25)
                             } label: {
                                 Label("加速", systemImage: "plus.circle.fill")
@@ -342,21 +432,15 @@ struct BottomControlsView: View {
                     .padding(.horizontal, 4)
                 }
 
-                if showTravelModes {
-                    travelModePicker
-                        .transition(.move(edge: .bottom).combined(with: .opacity))
-                } else {
-                    HStack(spacing: 10) {
-                        trayIcon("gearshape.fill") { showSettings = true }
-                        travelModeButton
-                        joystickButton
-                        if session.canResumeRoute {
-                            pausedRouteControls
-                        } else {
-                            sessionControl
-                        }
+                HStack(spacing: 10) {
+                    trayIcon("gearshape.fill") { showSettings = true }
+                    routeButton
+                    joystickButton
+                    if session.canResumeRoute {
+                        pausedRouteControls
+                    } else {
+                        sessionControl
                     }
-                    .transition(.opacity)
                 }
         }
         .padding(6)
@@ -365,51 +449,24 @@ struct BottomControlsView: View {
         .frame(maxWidth: .infinity, alignment: .trailing)
         .frame(minHeight: MapChromeLayout.primaryHeight)
         .animation(.easeOut(duration: 0.18), value: session.joystickActive)
-        .animation(.spring(response: 0.28, dampingFraction: 0.82), value: showTravelModes)
     }
 
-    private var travelModePicker: some View {
-        HStack(spacing: 6) {
-            ForEach(TravelMode.allCases) { mode in
-                let selected = session.travelMode == mode
-                Button {
-                    session.travelMode = mode
-                    withAnimation { showTravelModes = false }
-                    UISelectionFeedbackGenerator().selectionChanged()
-                } label: {
-                    Image(systemName: mode.icon)
-                        .font(.body.weight(.semibold))
-                        .foregroundStyle(selected ? .black : .primary)
-                        .frame(maxWidth: .infinity)
-                        .frame(height: 40)
-                        .background(Capsule().fill(selected ? LocusTheme.accent : Color.primary.opacity(0.08)))
-                        .contentShape(Capsule())
-                }
-                .buttonStyle(.plain)
-                .accessibilityLabel(mode.title)
-            }
-        }
-    }
-
-    private var travelModeButton: some View {
+    private var routeButton: some View {
         Button {
-            withAnimation { showTravelModes.toggle() }
+            showRouteSheet = true
         } label: {
-            Image(systemName: session.travelMode.icon)
+            Image(systemName: "point.topleft.down.to.point.bottomright.curvepath")
                 .font(.body.weight(.semibold))
-                .foregroundStyle(showTravelModes ? .black : .primary)
-                .frame(width: 44, height: 44)
-                .background(Circle().fill(showTravelModes ? LocusTheme.accent : Color.primary.opacity(0.08)))
+                .foregroundStyle(.primary)
+                .frame(width: 48, height: 48)
                 .contentShape(Circle())
         }
         .buttonStyle(.plain)
-        .accessibilityLabel("交通方式：\(session.travelMode.title)")
-        .accessibilityHint("轻点选择步行、跑步、骑行或驾车")
+        .accessibilityLabel("打开轨迹")
     }
 
     private var joystickButton: some View {
         Button {
-            showTravelModes = false
             if session.joystickActive {
                 session.stopJoystick()
             } else {
@@ -418,9 +475,8 @@ struct BottomControlsView: View {
         } label: {
             Image(systemName: "dot.circle.and.hand.point.up.left.fill")
                 .font(.body.weight(.semibold))
-                .foregroundStyle(session.joystickActive ? .black : .primary)
-                .frame(width: 44, height: 44)
-                .background(Circle().fill(session.joystickActive ? LocusTheme.accentSecondary : Color.primary.opacity(0.08)))
+                .foregroundStyle(session.joystickActive ? LocusTheme.accentSecondary : .primary)
+                .frame(width: 48, height: 48)
                 .contentShape(Circle())
         }
         .buttonStyle(.plain)
@@ -429,7 +485,6 @@ struct BottomControlsView: View {
 
     private var sessionControl: some View {
         Button {
-            showTravelModes = false
             performSessionAction()
         } label: {
             HStack(spacing: 6) {
@@ -465,7 +520,6 @@ struct BottomControlsView: View {
     private var pausedRouteControls: some View {
         HStack(spacing: 6) {
             Button {
-                showTravelModes = false
                 NotificationCenter.default.post(name: .locusDeleteRoute, object: nil)
             } label: {
                 Text("结束")
@@ -478,7 +532,6 @@ struct BottomControlsView: View {
             .buttonStyle(.plain)
 
             Button {
-                showTravelModes = false
                 UIImpactFeedbackGenerator(style: .light).impactOccurred()
                 session.resumeRoute(pairing: pairing)
             } label: {
@@ -520,14 +573,12 @@ struct BottomControlsView: View {
 
     private func trayIcon(_ systemName: String, action: @escaping () -> Void) -> some View {
         Button {
-            showTravelModes = false
             action()
         } label: {
             Image(systemName: systemName)
                 .font(.body.weight(.semibold))
                 .foregroundStyle(.primary)
-                .frame(width: 44, height: 44)
-                .background(Circle().fill(Color.primary.opacity(0.08)))
+                .frame(width: 48, height: 48)
                 .contentShape(Circle())
         }
         .buttonStyle(.plain)

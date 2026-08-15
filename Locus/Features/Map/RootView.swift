@@ -341,9 +341,10 @@ struct StatusBarView: View {
     }
 
     private var display: Display {
+        guard tunnelConnected else { return .connectVPN }
         switch session.status {
         case .idle:
-            return tunnelConnected ? .notSpoofing : .connectVPN
+            return .notSpoofing
         case .connecting:
             return .status("正在连接…")
         case .active:
@@ -374,7 +375,7 @@ struct StatusBarView: View {
     private var title: String {
         switch display {
         case .notSpoofing: return "未模拟定位"
-        case .connectVPN: return "连接 LocalDevVPN"
+        case .connectVPN: return "点击连接 LocalDevVPN"
         case .status(let text): return text
         }
     }
@@ -460,14 +461,8 @@ struct StatusBarView: View {
     }
 
     private var statusContent: some View {
-        HStack(spacing: 8) {
-            Button {
-                guard locationSummaryCoordinate != nil else { return }
-                UISelectionFeedbackGenerator().selectionChanged()
-                withAnimation(.spring(response: 0.32, dampingFraction: 0.82)) {
-                    showLocationDetails.toggle()
-                }
-            } label: {
+        Button(action: handleStatusTap) {
+            HStack(spacing: 8) {
                 VStack(alignment: .leading, spacing: 4) {
                     HStack(spacing: 10) {
                         Circle()
@@ -481,34 +476,28 @@ struct StatusBarView: View {
                             .lineLimit(1)
                     }
 
-                    if locationSummaryCoordinate != nil {
+                    if tunnelConnected, locationSummaryCoordinate != nil {
                         Text(locationSummary.shortText)
                             .font(.caption)
                             .foregroundStyle(.secondary)
                             .lineLimit(1)
                     }
                 }
-                .contentShape(Rectangle())
-            }
-            .buttonStyle(.plain)
-
-            if case .connectVPN = display {
-                Button {
-                    LocalDevVPN.openOrInstall()
-                } label: {
+                Spacer(minLength: 0)
+                if !tunnelConnected {
                     Image(systemName: "lock.shield.fill")
                         .font(.body.weight(.semibold))
                         .foregroundStyle(LocusTheme.accent)
                         .frame(width: 32, height: 32)
                 }
-                .buttonStyle(.plain)
-                .accessibilityLabel("打开 LocalDevVPN")
             }
+            .padding(.horizontal, 14)
+            .padding(.vertical, 10)
+            .locusGlass(.clear, in: RoundedRectangle(cornerRadius: 18, style: .continuous))
+            .contentShape(RoundedRectangle(cornerRadius: 18, style: .continuous))
         }
-        .padding(.horizontal, 14)
-        .padding(.vertical, 10)
-        .locusGlass(.clear, in: RoundedRectangle(cornerRadius: 18, style: .continuous))
-        .contentShape(RoundedRectangle(cornerRadius: 18, style: .continuous))
+        .buttonStyle(.plain)
+        .accessibilityLabel(tunnelConnected ? title : "点击连接 LocalDevVPN")
     }
 
     private var locationDetailsCard: some View {
@@ -543,11 +532,13 @@ struct StatusBarView: View {
                 locationDetailValue("邮编", locationSummary.postalCode)
             }
 
-            HStack(spacing: 6) {
+            HStack(spacing: 8) {
                 Label("地图数据源", systemImage: "map.fill")
-                Spacer(minLength: 8)
-                Text(mapDataSourceName)
-                    .fontWeight(.semibold)
+                Spacer(minLength: 4)
+                HStack(spacing: 5) {
+                    mapDataSourceBadge("Apple", isActive: mapDataSourceName == "Apple")
+                    mapDataSourceBadge("高德", isActive: mapDataSourceName == "高德")
+                }
             }
             .font(.caption2)
             .foregroundStyle(.secondary)
@@ -592,7 +583,7 @@ struct StatusBarView: View {
             "国家：\(locationSummary.country)",
             "城市：\(locationSummary.city)",
             "邮编：\(locationSummary.postalCode)",
-            "地图数据源：\(mapDataSourceName)",
+            "地图数据源：Apple / 高德（当前：\(mapDataSourceName)）",
             coordinate
         ]
         .filter { !$0.isEmpty }
@@ -612,8 +603,50 @@ struct StatusBarView: View {
         return ChinaCoordinateTransform.usesMainlandChinaOffset(coordinate) ? "高德" : "Apple"
     }
 
+    @ViewBuilder
+    private func mapDataSourceBadge(_ name: String, isActive: Bool) -> some View {
+        let badge = HStack(spacing: 4) {
+            Image(systemName: isActive ? "circle.fill" : "circle")
+                .font(.system(size: 7, weight: .semibold))
+            Text(name)
+                .fontWeight(isActive ? .bold : .regular)
+        }
+        .font(.caption2)
+        .foregroundStyle(isActive ? Color.primary : Color.secondary)
+        .padding(.horizontal, 7)
+        .frame(height: 24)
+
+        if isActive {
+            badge
+                .locusGlass(.regular, tint: Color.orange.opacity(0.45), in: Capsule())
+                .allowsHitTesting(false)
+        } else {
+            badge
+                .allowsHitTesting(false)
+        }
+    }
+
+    private func handleStatusTap() {
+        if !tunnelConnected {
+            showLocationDetails = false
+            UIImpactFeedbackGenerator(style: .light).impactOccurred()
+            LocalDevVPN.openOrInstall()
+            return
+        }
+
+        guard locationSummaryCoordinate != nil else { return }
+        UISelectionFeedbackGenerator().selectionChanged()
+        withAnimation(.spring(response: 0.32, dampingFraction: 0.82)) {
+            showLocationDetails.toggle()
+        }
+    }
+
     private func refreshTunnel() {
-        tunnelConnected = LocalDevVPN.isConnected
+        let connected = LocalDevVPN.isConnected
+        if !connected, showLocationDetails {
+            showLocationDetails = false
+        }
+        tunnelConnected = connected
     }
 
     private var locationSummaryCoordinate: CLLocationCoordinate2D? {

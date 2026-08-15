@@ -128,7 +128,7 @@ struct SettingsView: View {
                 }
             }
             .scrollContentBackground(.hidden)
-            .background(Color.clear)
+            .background(.regularMaterial)
             .navigationTitle("设置")
             .toolbar {
                 ToolbarItem(placement: .confirmationAction) {
@@ -359,7 +359,7 @@ struct PlacesView: View {
 
             }
             .scrollContentBackground(.hidden)
-            .background(Color.clear)
+            .background(.regularMaterial)
             .navigationTitle("收藏夹")
             .task {
                 await session.backfillFavoriteCountries()

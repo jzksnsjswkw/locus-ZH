@@ -333,6 +333,7 @@ struct StatusBarView: View {
     @StateObject private var locationSummary = MapLocationSummary()
     @State private var tunnelConnected = LocalDevVPN.isConnected
     @State private var showLocationDetails = false
+    @State private var displayedMapDataSourceName = "Apple"
 
     private enum Display {
         case notSpoofing
@@ -394,6 +395,7 @@ struct StatusBarView: View {
         }
         .onAppear {
             refreshTunnel()
+            refreshMapDataSource()
             syncLiveActivity()
             updateLocationSummary()
         }
@@ -427,6 +429,7 @@ struct StatusBarView: View {
             syncLiveActivity()
         }
         .onChange(of: session.locationSummaryRevision) { _, _ in
+            refreshMapDataSource()
             updateLocationSummary(force: true)
         }
         .onChange(of: session.pin?.latitude) { _, _ in
@@ -599,8 +602,7 @@ struct StatusBarView: View {
     }
 
     private var mapDataSourceName: String {
-        guard let coordinate = locationSummaryCoordinate else { return "Apple" }
-        return ChinaCoordinateTransform.usesMainlandChinaOffset(coordinate) ? "高德" : "Apple"
+        displayedMapDataSourceName
     }
 
     @ViewBuilder
@@ -651,6 +653,14 @@ struct StatusBarView: View {
 
     private var locationSummaryCoordinate: CLLocationCoordinate2D? {
         session.simulated ?? session.selectedTargetCoordinate ?? session.realMapCoordinate
+    }
+
+    private func refreshMapDataSource() {
+        guard !session.routeActive, !session.routePaused else { return }
+        guard let coordinate = session.simulated else { return }
+        displayedMapDataSourceName = ChinaCoordinateTransform.usesMainlandChinaOffset(coordinate)
+            ? "高德"
+            : "Apple"
     }
 
     private func updateLocationSummary(force: Bool = false) {

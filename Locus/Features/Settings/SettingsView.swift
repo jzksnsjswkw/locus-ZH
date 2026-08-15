@@ -225,7 +225,7 @@ struct SettingsView: View {
     }
 
     private var mapInteractionSection: some View {
-        Section("地图与交互") {
+        Section {
             Picker("定位点选择方式", selection: $session.targetSelectionMode) {
                 ForEach(TargetSelectionMode.allCases) { mode in
                     Label(mode.title, systemImage: mode.icon).tag(mode)
@@ -247,6 +247,8 @@ struct SettingsView: View {
             Toggle("地图缩放滑条", isOn: $session.zoomSliderEnabled)
             Toggle("轨迹运行时自动跟随", isOn: $session.autoFollowRoute)
             Toggle("启动时恢复上次地图视角", isOn: $session.restoreLastMapView)
+        } header: {
+            Text("地图与交互")
         } footer: {
             Text("街景仅在 Apple 提供 Look Around 的地区可用。地图缩放滑条默认关闭；开启后可直接上下拖动。")
         }

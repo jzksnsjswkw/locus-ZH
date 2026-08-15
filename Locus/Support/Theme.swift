@@ -16,6 +16,41 @@ enum LocusGlassStyle {
     case interactive
 }
 
+/// A transparent presentation surface that lets the map remain visible.
+/// On iOS 26+ this is real Liquid Glass; older systems use a material fallback.
+private struct LocusSheetGlassBackground: View {
+    @Environment(\.colorScheme) private var colorScheme
+
+    var body: some View {
+        Group {
+            if #available(iOS 26.0, *) {
+                Color.clear
+                    .glassEffect(.clear, in: Rectangle())
+                    .background(readabilityTint)
+            } else {
+                Rectangle()
+                    .fill(.ultraThinMaterial)
+                    .overlay(readabilityTint)
+            }
+        }
+        .ignoresSafeArea()
+        .allowsHitTesting(false)
+    }
+
+    private var readabilityTint: Color {
+        Color.black.opacity(colorScheme == .dark ? 0.12 : 0.06)
+    }
+}
+
+/// A stronger blur reserved for grouped rows so text stays readable while the
+/// surrounding sheet continues to show the map through the glass.
+private struct LocusSheetRowBackground: View {
+    var body: some View {
+        Rectangle()
+            .fill(.regularMaterial)
+    }
+}
+
 /// Liquid Glass on iOS 26+; material fallback earlier.
 struct LocusGlassModifier<S: Shape>: ViewModifier {
     var style: LocusGlassStyle
@@ -67,12 +102,14 @@ extension View {
     }
 
     func locusSheetPresentation() -> some View {
-        background(Color.clear)
-            .presentationBackground(.ultraThinMaterial)
+        background {
+            LocusSheetGlassBackground()
+        }
+        .presentationBackground(.clear)
     }
 
     /// Keeps grouped sheet rows readable without making the whole sheet opaque.
     func locusSheetRows() -> some View {
-        listRowBackground(Rectangle().fill(.regularMaterial))
+        listRowBackground(LocusSheetRowBackground())
     }
 }

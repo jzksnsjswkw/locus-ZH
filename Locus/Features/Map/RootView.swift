@@ -20,6 +20,8 @@ struct RootView: View {
     @EnvironmentObject private var pairing: PairingStore
     @State private var showSettings = false
     @State private var showPlaces = false
+    @State private var settingsSheetDetent: PresentationDetent = .medium
+    @State private var placesSheetDetent: PresentationDetent = .medium
     @State private var favoriteRenameSuggestion: SavedPlace?
     @State private var favoriteToRename: SavedPlace?
     @State private var favoriteRenameText = ""
@@ -89,15 +91,19 @@ struct RootView: View {
             .padding(.bottom, MapChromeLayout.bottomPadding)
             .transition(.opacity.combined(with: .move(edge: .bottom)))
         }
-        .sheet(isPresented: $showSettings) {
+        .sheet(isPresented: $showSettings, onDismiss: {
+            settingsSheetDetent = .medium
+        }) {
             SettingsView()
-                .presentationDetents([.medium, .large])
-                .locusSheetPresentation()
+                .presentationDetents([.medium, .large], selection: $settingsSheetDetent)
+                .locusSheetPresentation(isExpanded: settingsSheetDetent == .large)
         }
-        .sheet(isPresented: $showPlaces) {
+        .sheet(isPresented: $showPlaces, onDismiss: {
+            placesSheetDetent = .medium
+        }) {
             PlacesView()
-                .presentationDetents([.medium, .large])
-                .locusSheetPresentation()
+                .presentationDetents([.medium, .large], selection: $placesSheetDetent)
+                .locusSheetPresentation(isExpanded: placesSheetDetent == .large)
         }
         .alert("Locus", isPresented: Binding(
             get: { session.lastError != nil },

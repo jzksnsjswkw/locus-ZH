@@ -8,6 +8,7 @@ struct SettingsView: View {
 
     @State private var showImporter = false
     @State private var showPairOnDevice = false
+    @State private var pairingSheetDetent: PresentationDetent = .medium
     @State private var showNameEasterEgg = false
     @State private var showBackupExporter = false
     @State private var showBackupImporter = false
@@ -158,11 +159,13 @@ struct SettingsView: View {
             )
             .ignoresSafeArea()
         }
-            .sheet(isPresented: $showPairOnDevice) {
+            .sheet(isPresented: $showPairOnDevice, onDismiss: {
+                pairingSheetDetent = .medium
+            }) {
                 PairOnDeviceView()
                     .environmentObject(pairing)
-                    .presentationDetents([.medium, .large])
-                    .locusSheetPresentation()
+                    .presentationDetents([.medium, .large], selection: $pairingSheetDetent)
+                    .locusSheetPresentation(isExpanded: pairingSheetDetent == .large)
             }
             .fullScreenCover(isPresented: $showNameEasterEgg) {
                 LocusEasterEggView()

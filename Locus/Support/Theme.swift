@@ -20,25 +20,29 @@ enum LocusGlassStyle {
 /// On iOS 26+ this is real Liquid Glass; older systems use a material fallback.
 private struct LocusSheetGlassBackground: View {
     @Environment(\.colorScheme) private var colorScheme
+    var isExpanded: Bool
 
     var body: some View {
         Group {
             if #available(iOS 26.0, *) {
                 Color.clear
-                    .glassEffect(.clear, in: Rectangle())
-                    .background(readabilityTint)
+                    .glassEffect(.regular, in: Rectangle())
             } else {
                 Rectangle()
                     .fill(.ultraThinMaterial)
-                    .overlay(readabilityTint)
             }
         }
+        .overlay(expandedReadabilityTint)
         .ignoresSafeArea()
         .allowsHitTesting(false)
+        .animation(.easeInOut(duration: 0.22), value: isExpanded)
     }
 
-    private var readabilityTint: Color {
-        Color.black.opacity(colorScheme == .dark ? 0.12 : 0.06)
+    private var expandedReadabilityTint: Color {
+        guard isExpanded else { return .clear }
+        return colorScheme == .dark
+            ? Color.black.opacity(0.20)
+            : Color.white.opacity(0.14)
     }
 }
 
@@ -101,9 +105,9 @@ extension View {
         locusGlass(style, tint: tint, in: RoundedRectangle(cornerRadius: 20, style: .continuous))
     }
 
-    func locusSheetPresentation() -> some View {
+    func locusSheetPresentation(isExpanded: Bool) -> some View {
         background {
-            LocusSheetGlassBackground()
+            LocusSheetGlassBackground(isExpanded: isExpanded)
         }
         .presentationBackground(.clear)
     }

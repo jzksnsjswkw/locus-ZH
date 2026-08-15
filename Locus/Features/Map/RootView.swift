@@ -92,12 +92,10 @@ struct RootView: View {
         .sheet(isPresented: $showSettings) {
             SettingsView()
                 .presentationDetents([.medium, .large])
-                .presentationBackground(.ultraThinMaterial)
         }
         .sheet(isPresented: $showPlaces) {
             PlacesView()
                 .presentationDetents([.medium, .large])
-                .presentationBackground(.ultraThinMaterial)
         }
         .alert("Locus", isPresented: Binding(
             get: { session.lastError != nil },

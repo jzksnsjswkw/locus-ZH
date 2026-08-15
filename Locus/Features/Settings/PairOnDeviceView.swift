@@ -22,7 +22,6 @@ struct PairOnDeviceView: View {
             if mode == .sheet {
                 NavigationStack {
                     scrollContent
-                        .background(Color.clear)
                         .navigationTitle("在此 iPhone 上配对")
                         .navigationBarTitleDisplayMode(.inline)
                         .toolbar {

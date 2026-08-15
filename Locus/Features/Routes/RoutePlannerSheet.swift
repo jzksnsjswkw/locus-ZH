@@ -4,6 +4,7 @@ struct RoutePlannerSheet: View {
     var onPlay: () -> Void
     var onImportGPX: () -> Void
     var onExportGPX: () -> Void
+    var onBuildRouteToTarget: () -> Void
     var drawMode: Bool
     var onToggleDrawing: () -> Void
 
@@ -14,6 +15,8 @@ struct RoutePlannerSheet: View {
         NavigationStack {
             List {
                 Section("速度与循环") {
+                    TravelModeSelector()
+                        .listRowInsets(EdgeInsets(top: 8, leading: 12, bottom: 8, trailing: 12))
                     HStack {
                         Label("速度", systemImage: "speedometer")
                         Spacer()
@@ -22,9 +25,6 @@ struct RoutePlannerSheet: View {
                             .foregroundStyle(.secondary)
                     }
                     Slider(value: $session.speedMultiplier, in: 0.25...4.0, step: 0.25)
-                    Text("运行期间可在地图底部主控件中切换交通方式，并继续微调速度。")
-                        .font(.footnote)
-                        .foregroundStyle(.secondary)
                     Toggle(isOn: $session.routeLoopEnabled) {
                         Label("循环运行轨迹", systemImage: "repeat")
                     }
@@ -62,8 +62,16 @@ struct RoutePlannerSheet: View {
                 }
 
                 Section("生成轨迹") {
-                    Label("长按地图上的红色图钉，然后选择“生成轨迹”", systemImage: "hand.tap.fill")
-                    Text("当前定位点始终作为起点，红图钉作为终点。速度设置同时作用于轨迹和摇杆。")
+                    if session.targetSelectionMode == .crosshair {
+                        Button(action: onBuildRouteToTarget) {
+                            Label("从当前位置生成至准星的轨迹", systemImage: "scope")
+                        }
+                    } else {
+                        Label("长按地图上的红色图钉，然后选择“生成轨迹”", systemImage: "hand.tap.fill")
+                    }
+                    Text(session.targetSelectionMode == .crosshair
+                         ? "当前模拟位置或真实位置作为起点，屏幕中央准星作为终点。"
+                         : "当前模拟位置或真实位置作为起点，红图钉作为终点。")
                         .font(.footnote)
                         .foregroundStyle(.secondary)
                 }

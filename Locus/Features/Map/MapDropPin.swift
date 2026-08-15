@@ -45,7 +45,7 @@ struct MapDropPin: View {
                     }
                 }
                 .onLongPressGesture(
-                    minimumDuration: 1.0,
+                    minimumDuration: 0.5,
                     maximumDistance: 20,
                     pressing: handlePressing,
                     perform: activateLongPress

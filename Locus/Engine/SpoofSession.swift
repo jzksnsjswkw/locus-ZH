@@ -4,7 +4,7 @@ import MapKit
 import UIKit
 import UserNotifications
 
-enum TravelMode: String, CaseIterable, Identifiable {
+enum TravelMode: String, CaseIterable, Codable, Identifiable {
     case walk, run, cycle, drive
 
     var id: String { rawValue }
@@ -73,8 +73,28 @@ final class SpoofSession: ObservableObject {
     @Published var status: SpoofStatus = .idle
     @Published var pin: CLLocationCoordinate2D?
     @Published var simulated: CLLocationCoordinate2D?
-    @Published var travelMode: TravelMode = .walk
-    @Published var mapStyleIndex: Int = 0
+    @Published var travelMode: TravelMode = .walk {
+        didSet { UserDefaults.standard.set(travelMode.rawValue, forKey: "locus.travelMode") }
+    }
+    @Published var mapStyleIndex: Int = 0 {
+        didSet { UserDefaults.standard.set(mapStyleIndex, forKey: "locus.mapStyleIndex") }
+    }
+    @Published var targetSelectionMode: TargetSelectionMode = .pin {
+        didSet { UserDefaults.standard.set(targetSelectionMode.rawValue, forKey: "locus.targetSelectionMode") }
+    }
+    @Published var crosshairCoordinate: CLLocationCoordinate2D?
+    @Published var lookAroundEnabled = false {
+        didSet { UserDefaults.standard.set(lookAroundEnabled, forKey: "locus.lookAroundEnabled") }
+    }
+    @Published var searchHistoryEnabled = true {
+        didSet { UserDefaults.standard.set(searchHistoryEnabled, forKey: "locus.searchHistoryEnabled") }
+    }
+    @Published var autoFollowRoute = false {
+        didSet { UserDefaults.standard.set(autoFollowRoute, forKey: "locus.autoFollowRoute") }
+    }
+    @Published var restoreLastMapView = false {
+        didSet { UserDefaults.standard.set(restoreLastMapView, forKey: "locus.restoreLastMapView") }
+    }
     @Published var lastError: String?
     @Published var isBusy = false
     @Published var joystickActive = false
@@ -90,10 +110,13 @@ final class SpoofSession: ObservableObject {
     @Published var routeLoopEnabled = false {
         didSet { UserDefaults.standard.set(routeLoopEnabled, forKey: "locus.routeLoopEnabled") }
     }
-    @Published var routeLoopCount = 2
+    @Published var routeLoopCount = 2 {
+        didSet { UserDefaults.standard.set(routeLoopCount, forKey: "locus.routeLoopCount") }
+    }
 
     @Published var favorites: [SavedPlace] = []
     @Published var recents: [SavedPlace] = []
+    @Published var searchHistory: [SearchHistoryEntry] = []
 
     private var resendTimer: Timer?
     private var healthTimer: Timer?
@@ -107,6 +130,7 @@ final class SpoofSession: ObservableObject {
 
     private let favoritesKey = "locus.favorites"
     private let recentsKey = "locus.recents"
+    private let searchHistoryKey = "locus.searchHistory"
     private let favoriteMatchTolerance: CLLocationDistance = 8
     private let countryLookupRetryDelay: TimeInterval = 15 * 60
     private var countryLookupRunning = false
@@ -114,9 +138,142 @@ final class SpoofSession: ObservableObject {
     init() {
         favorites = SavedPlace.load(key: favoritesKey)
         recents = SavedPlace.load(key: recentsKey)
+        searchHistory = SearchHistoryEntry.load(key: searchHistoryKey)
         let storedSpeed = UserDefaults.standard.double(forKey: "locus.speedMultiplier")
         speedMultiplier = storedSpeed > 0 ? min(4.0, max(0.25, storedSpeed)) : 1.0
         routeLoopEnabled = UserDefaults.standard.bool(forKey: "locus.routeLoopEnabled")
+        routeLoopCount = max(2, min(99, UserDefaults.standard.integer(forKey: "locus.routeLoopCount")))
+        travelMode = TravelMode(rawValue: UserDefaults.standard.string(forKey: "locus.travelMode") ?? "") ?? .walk
+        mapStyleIndex = min(1, max(0, UserDefaults.standard.integer(forKey: "locus.mapStyleIndex")))
+        targetSelectionMode = TargetSelectionMode(
+            rawValue: UserDefaults.standard.string(forKey: "locus.targetSelectionMode") ?? ""
+        ) ?? .pin
+        lookAroundEnabled = UserDefaults.standard.bool(forKey: "locus.lookAroundEnabled")
+        searchHistoryEnabled = UserDefaults.standard.object(forKey: "locus.searchHistoryEnabled") == nil
+            ? true
+            : UserDefaults.standard.bool(forKey: "locus.searchHistoryEnabled")
+        autoFollowRoute = UserDefaults.standard.bool(forKey: "locus.autoFollowRoute")
+        restoreLastMapView = UserDefaults.standard.bool(forKey: "locus.restoreLastMapView")
+    }
+
+    var selectedTargetCoordinate: CLLocationCoordinate2D? {
+        switch targetSelectionMode {
+        case .pin: return pin
+        case .crosshair: return crosshairCoordinate
+        }
+    }
+
+    func selectTravelMode(_ mode: TravelMode) {
+        travelMode = mode
+        speedMultiplier = 1.0
+    }
+
+    func recordSearch(title: String, subtitle: String, coordinate: CLLocationCoordinate2D) {
+        guard searchHistoryEnabled else { return }
+        let cleanedTitle = title.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !cleanedTitle.isEmpty else { return }
+        searchHistory.removeAll {
+            Self.distance(from: $0.coordinate, to: coordinate) <= 15 ||
+                ($0.title.caseInsensitiveCompare(cleanedTitle) == .orderedSame &&
+                 $0.subtitle.caseInsensitiveCompare(subtitle) == .orderedSame)
+        }
+        searchHistory.insert(
+            SearchHistoryEntry(
+                title: cleanedTitle,
+                subtitle: subtitle.trimmingCharacters(in: .whitespacesAndNewlines),
+                latitude: coordinate.latitude,
+                longitude: coordinate.longitude
+            ),
+            at: 0
+        )
+        if searchHistory.count > 20 { searchHistory = Array(searchHistory.prefix(20)) }
+        SearchHistoryEntry.save(searchHistory, key: searchHistoryKey)
+    }
+
+    func removeSearchHistory(_ entry: SearchHistoryEntry) {
+        searchHistory.removeAll { $0.id == entry.id }
+        SearchHistoryEntry.save(searchHistory, key: searchHistoryKey)
+    }
+
+    func clearSearchHistory() {
+        searchHistory.removeAll()
+        SearchHistoryEntry.save(searchHistory, key: searchHistoryKey)
+    }
+
+    func makeBackup() -> LocusBackup {
+        LocusBackup(
+            favorites: favorites,
+            searchHistory: searchHistory,
+            preferences: BackupPreferences(
+                travelMode: travelMode.rawValue,
+                speedMultiplier: speedMultiplier,
+                routeLoopEnabled: routeLoopEnabled,
+                routeLoopCount: routeLoopCount,
+                mapStyleIndex: mapStyleIndex,
+                targetSelectionMode: targetSelectionMode.rawValue,
+                lookAroundEnabled: lookAroundEnabled,
+                searchHistoryEnabled: searchHistoryEnabled,
+                autoFollowRoute: autoFollowRoute,
+                restoreLastMapView: restoreLastMapView
+            )
+        )
+    }
+
+    func applyBackup(_ uncheckedBackup: LocusBackup) throws {
+        let backup = try uncheckedBackup.validated()
+        for place in backup.favorites where favorite(at: place.coordinate) == nil {
+            favorites.append(place)
+        }
+        SavedPlace.save(favorites, key: favoritesKey)
+
+        for entry in backup.searchHistory where !searchHistory.contains(where: {
+            Self.distance(from: $0.coordinate, to: entry.coordinate) <= 15
+        }) {
+            searchHistory.append(entry)
+        }
+        searchHistory.sort { $0.visitedAt > $1.visitedAt }
+        if searchHistory.count > 20 { searchHistory = Array(searchHistory.prefix(20)) }
+        SearchHistoryEntry.save(searchHistory, key: searchHistoryKey)
+
+        travelMode = TravelMode(rawValue: backup.preferences.travelMode) ?? .walk
+        speedMultiplier = min(4.0, max(0.25, backup.preferences.speedMultiplier))
+        routeLoopEnabled = backup.preferences.routeLoopEnabled
+        routeLoopCount = min(99, max(2, backup.preferences.routeLoopCount))
+        mapStyleIndex = min(1, max(0, backup.preferences.mapStyleIndex))
+        targetSelectionMode = TargetSelectionMode(rawValue: backup.preferences.targetSelectionMode) ?? .pin
+        lookAroundEnabled = backup.preferences.lookAroundEnabled
+        searchHistoryEnabled = backup.preferences.searchHistoryEnabled
+        autoFollowRoute = backup.preferences.autoFollowRoute
+        restoreLastMapView = backup.preferences.restoreLastMapView
+    }
+
+    func saveMapRegion(_ region: MKCoordinateRegion) {
+        let values = [
+            region.center.latitude,
+            region.center.longitude,
+            region.span.latitudeDelta,
+            region.span.longitudeDelta
+        ]
+        guard values.allSatisfy({ $0.isFinite }),
+              (-90...90).contains(region.center.latitude),
+              (-180...180).contains(region.center.longitude),
+              region.span.latitudeDelta > 0,
+              region.span.longitudeDelta > 0 else { return }
+        UserDefaults.standard.set(values, forKey: "locus.lastMapRegion")
+    }
+
+    func savedMapRegion() -> MKCoordinateRegion? {
+        guard let values = UserDefaults.standard.array(forKey: "locus.lastMapRegion") as? [Double],
+              values.count == 4,
+              values.allSatisfy({ $0.isFinite }),
+              (-90...90).contains(values[0]),
+              (-180...180).contains(values[1]),
+              values[2] > 0,
+              values[3] > 0 else { return nil }
+        return MKCoordinateRegion(
+            center: CLLocationCoordinate2D(latitude: values[0], longitude: values[1]),
+            span: MKCoordinateSpan(latitudeDelta: values[2], longitudeDelta: values[3])
+        )
     }
 
     var isSpoofing: Bool {

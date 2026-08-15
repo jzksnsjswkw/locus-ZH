@@ -1,6 +1,7 @@
 import SwiftUI
 import NetworkExtension
 import CoreLocation
+import MapKit
 import UIKit
 
 enum MapChromeLayout {
@@ -272,6 +273,10 @@ struct StatusBarView: View {
     @StateObject private var locationSummary = MapLocationSummary()
     @State private var tunnelConnected = LocalDevVPN.isConnected
     @State private var showLocationDetails = false
+    @State private var showLookAround = false
+    @State private var lookAroundScene: MKLookAroundScene?
+    @State private var lookAroundRequest: MKLookAroundSceneRequest?
+    @State private var lookAroundLoading = false
 
     private enum Display {
         case notSpoofing
@@ -321,18 +326,6 @@ struct StatusBarView: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 8) {
             statusContent
-                .onTapGesture {
-                    if case .connectVPN = display {
-                        LocalDevVPN.openOrInstall()
-                    }
-                }
-                .onLongPressGesture(minimumDuration: 0.45) {
-                    guard locationSummaryCoordinate != nil else { return }
-                    UIImpactFeedbackGenerator(style: .soft).impactOccurred()
-                    withAnimation(.spring(response: 0.32, dampingFraction: 0.82)) {
-                        showLocationDetails.toggle()
-                    }
-                }
 
             if showLocationDetails, locationSummaryCoordinate != nil {
                 locationDetailsCard
@@ -384,6 +377,12 @@ struct StatusBarView: View {
         .onChange(of: session.pin?.longitude) { _, _ in
             updateLocationSummary()
         }
+        .onChange(of: session.crosshairCoordinate?.latitude) { _, _ in
+            updateLocationSummary()
+        }
+        .onChange(of: session.crosshairCoordinate?.longitude) { _, _ in
+            updateLocationSummary()
+        }
         .onReceive(NotificationCenter.default.publisher(for: .NEVPNStatusDidChange)) { _ in
             // LocalDevVPN connection changes show up here even though we don’t own the VPN.
             refreshTunnel()
@@ -401,33 +400,63 @@ struct StatusBarView: View {
                 refreshTunnel()
             }
         }
+        .lookAroundViewer(isPresented: $showLookAround, initialScene: lookAroundScene)
+        .onChange(of: session.lookAroundEnabled) { _, enabled in
+            guard !enabled else { return }
+            lookAroundRequest?.cancel()
+            lookAroundRequest = nil
+            lookAroundScene = nil
+            showLookAround = false
+        }
+        .onDisappear {
+            lookAroundRequest?.cancel()
+        }
     }
 
     private var statusContent: some View {
-        VStack(alignment: .leading, spacing: 4) {
-            HStack(spacing: 10) {
-                Circle()
-                    .fill(color)
-                    .frame(width: 8, height: 8)
-                    .shadow(color: color.opacity(0.7), radius: 4)
-
-                Text(title)
-                    .font(.subheadline.weight(.semibold))
-                    .foregroundStyle(.primary)
-                    .lineLimit(1)
-
-                if case .connectVPN = display {
-                    Image(systemName: "lock.shield.fill")
-                        .font(.caption.weight(.semibold))
-                        .foregroundStyle(LocusTheme.accent)
+        HStack(spacing: 8) {
+            Button {
+                guard locationSummaryCoordinate != nil else { return }
+                UISelectionFeedbackGenerator().selectionChanged()
+                withAnimation(.spring(response: 0.32, dampingFraction: 0.82)) {
+                    showLocationDetails.toggle()
                 }
-            }
+            } label: {
+                VStack(alignment: .leading, spacing: 4) {
+                    HStack(spacing: 10) {
+                        Circle()
+                            .fill(color)
+                            .frame(width: 8, height: 8)
+                            .shadow(color: color.opacity(0.7), radius: 4)
 
-            if locationSummaryCoordinate != nil {
-                Text(locationSummary.shortText)
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
-                    .lineLimit(1)
+                        Text(title)
+                            .font(.subheadline.weight(.semibold))
+                            .foregroundStyle(.primary)
+                            .lineLimit(1)
+                    }
+
+                    if locationSummaryCoordinate != nil {
+                        Text(locationSummary.shortText)
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                            .lineLimit(1)
+                    }
+                }
+                .contentShape(Rectangle())
+            }
+            .buttonStyle(.plain)
+
+            if case .connectVPN = display {
+                Button {
+                    LocalDevVPN.openOrInstall()
+                } label: {
+                    Image(systemName: "lock.shield.fill")
+                        .font(.body.weight(.semibold))
+                        .foregroundStyle(LocusTheme.accent)
+                        .frame(width: 32, height: 32)
+                }
+                .buttonStyle(.plain)
+                .accessibilityLabel("打开 LocalDevVPN")
             }
         }
         .padding(.horizontal, 14)
@@ -448,19 +477,29 @@ struct StatusBarView: View {
                 } label: {
                     Label("复制", systemImage: "doc.on.doc")
                         .font(.caption.weight(.semibold))
+                        .padding(.horizontal, 9)
+                        .frame(height: 30)
                 }
                 .buttonStyle(.plain)
-                .foregroundStyle(LocusTheme.accent)
-                Button {
-                    withAnimation(.easeOut(duration: 0.18)) {
-                        showLocationDetails = false
+                .foregroundStyle(.white)
+                .locusGlass(.interactive, tint: Color.blue.opacity(0.45), in: Capsule())
+
+                if session.lookAroundEnabled {
+                    Button(action: loadLookAround) {
+                        Group {
+                            if lookAroundLoading {
+                                ProgressView()
+                            } else {
+                                Image(systemName: "binoculars.fill")
+                            }
+                        }
+                        .frame(width: 30, height: 30)
                     }
-                } label: {
-                    Image(systemName: "xmark.circle.fill")
-                        .foregroundStyle(.secondary)
+                    .buttonStyle(.plain)
+                    .locusGlass(.interactive, tint: Color.blue.opacity(0.3), in: Circle())
+                    .disabled(lookAroundLoading)
+                    .accessibilityLabel("查看 Apple Look Around")
                 }
-                .buttonStyle(.plain)
-                .accessibilityLabel("关闭位置信息")
             }
 
             Text(locationSummary.formattedAddress)
@@ -474,8 +513,17 @@ struct StatusBarView: View {
                 locationDetailValue("邮编", locationSummary.postalCode)
             }
 
+            TimelineView(.periodic(from: .now, by: 60)) { context in
+                Label("当地时间：\(locationSummary.localTimeString(at: context.date))", systemImage: "clock")
+                    .font(.caption2.monospacedDigit())
+                    .foregroundStyle(.secondary)
+            }
+
             if let coordinate = locationSummaryCoordinate {
-                Text(String(format: "%.5f, %.5f", coordinate.latitude, coordinate.longitude))
+                Text("纬度：\(latitudeText(coordinate.latitude))")
+                    .font(.caption2.monospacedDigit())
+                    .foregroundStyle(.secondary)
+                Text("经度：\(longitudeText(coordinate.longitude))")
                     .font(.caption2.monospacedDigit())
                     .foregroundStyle(.secondary)
             }
@@ -484,11 +532,6 @@ struct StatusBarView: View {
         .frame(width: 270, alignment: .leading)
         .locusGlass(.regular, in: RoundedRectangle(cornerRadius: 20, style: .continuous))
         .contentShape(RoundedRectangle(cornerRadius: 20, style: .continuous))
-        .onTapGesture {
-            withAnimation(.easeOut(duration: 0.18)) {
-                showLocationDetails = false
-            }
-        }
     }
 
     private func locationDetailValue(_ title: String, _ value: String) -> some View {
@@ -504,7 +547,7 @@ struct StatusBarView: View {
 
     private var locationCopyText: String {
         let coordinate = locationSummaryCoordinate.map {
-            String(format: "%.5f, %.5f", $0.latitude, $0.longitude)
+            "纬度：\(latitudeText($0.latitude))\n经度：\(longitudeText($0.longitude))"
         } ?? ""
         return [
             locationSummary.formattedAddress,
@@ -517,12 +560,44 @@ struct StatusBarView: View {
         .joined(separator: "\n")
     }
 
+    private func latitudeText(_ latitude: Double) -> String {
+        String(format: "%.5f° %@", abs(latitude), latitude >= 0 ? "N" : "S")
+    }
+
+    private func longitudeText(_ longitude: Double) -> String {
+        String(format: "%.5f° %@", abs(longitude), longitude >= 0 ? "E" : "W")
+    }
+
+    private func loadLookAround() {
+        guard session.lookAroundEnabled,
+              let coordinate = session.selectedTargetCoordinate ?? locationSummaryCoordinate else { return }
+        lookAroundRequest?.cancel()
+        let request = MKLookAroundSceneRequest(
+            coordinate: ChinaCoordinateTransform.mapCoordinateToSystemCoordinate(coordinate)
+        )
+        lookAroundRequest = request
+        lookAroundLoading = true
+        request.getSceneWithCompletionHandler { scene, error in
+            DispatchQueue.main.async {
+                guard self.lookAroundRequest === request else { return }
+                self.lookAroundLoading = false
+                self.lookAroundRequest = nil
+                guard let scene else {
+                    self.session.lastError = error?.localizedDescription ?? "此位置暂无 Apple Look Around。"
+                    return
+                }
+                self.lookAroundScene = scene
+                self.showLookAround = true
+            }
+        }
+    }
+
     private func refreshTunnel() {
         tunnelConnected = LocalDevVPN.isConnected
     }
 
     private var locationSummaryCoordinate: CLLocationCoordinate2D? {
-        session.simulated ?? session.pin ?? session.realMapCoordinate
+        session.simulated ?? session.selectedTargetCoordinate ?? session.realMapCoordinate
     }
 
     private func updateLocationSummary() {
@@ -554,6 +629,7 @@ private final class MapLocationSummary: ObservableObject {
     @Published private(set) var city = "地区"
     @Published private(set) var postalCode = "—"
     @Published private(set) var formattedAddress = "正在获取 Apple 地图地址"
+    @Published private(set) var timeZone: TimeZone?
 
     var shortText: String {
         [country, city]
@@ -562,6 +638,15 @@ private final class MapLocationSummary: ObservableObject {
                 if result.last != value { result.append(value) }
             }
             .joined(separator: " ")
+    }
+
+    func localTimeString(at date: Date) -> String {
+        guard let timeZone else { return "—" }
+        let formatter = DateFormatter()
+        formatter.locale = Locale(identifier: "zh_Hans_CN")
+        formatter.timeZone = timeZone
+        formatter.dateFormat = "dd日 HH:mm"
+        return formatter.string(from: date)
     }
 
     private let geocoder = CLGeocoder()
@@ -606,6 +691,7 @@ private final class MapLocationSummary: ObservableObject {
                     placemark?.locality ?? placemark?.subAdministrativeArea ?? placemark?.administrativeArea
                 ) ?? "未知城市"
                 self.postalCode = self.nonEmpty(placemark?.postalCode) ?? "—"
+                self.timeZone = placemark?.timeZone
                 let street = [placemark?.subThoroughfare, placemark?.thoroughfare]
                     .compactMap(self.englishText)
                     .joined(separator: " ")
@@ -636,6 +722,7 @@ private final class MapLocationSummary: ObservableObject {
                 self.city = "未知城市"
                 self.postalCode = "—"
                 self.formattedAddress = "无法获取地址"
+                self.timeZone = nil
             }
         }
     }
@@ -725,11 +812,7 @@ struct BottomControlsView: View {
 
     private var routeRuntimeOptions: some View {
         VStack(spacing: 8) {
-            HStack(spacing: 6) {
-                ForEach(TravelMode.allCases) { mode in
-                    routeModeButton(mode)
-                }
-            }
+            TravelModeSelector(compact: true)
 
             HStack(spacing: 10) {
                 Toggle(isOn: $session.routeLoopEnabled) {
@@ -742,34 +825,6 @@ struct BottomControlsView: View {
                 loopCountControl
             }
         }
-    }
-
-    private func routeModeButton(_ mode: TravelMode) -> some View {
-        let selected = session.travelMode == mode
-        return Button {
-            session.travelMode = mode
-            session.speedMultiplier = 1.0
-            UISelectionFeedbackGenerator().selectionChanged()
-        } label: {
-            VStack(spacing: 2) {
-                Image(systemName: mode.icon)
-                    .font(.subheadline.weight(.semibold))
-                Text(mode.title)
-                    .font(.caption2.weight(.semibold))
-            }
-            .foregroundStyle(selected ? .black : .primary)
-            .frame(maxWidth: .infinity)
-            .frame(height: 40)
-            .locusGlass(
-                .interactive,
-                tint: selected ? LocusTheme.accent : nil,
-                in: Capsule()
-            )
-            .contentShape(Capsule())
-        }
-        .buttonStyle(.plain)
-        .accessibilityLabel("交通方式：\(mode.title)")
-        .accessibilityValue(selected ? "已选择" : "未选择")
     }
 
     private var routeProgressText: String {
@@ -928,11 +983,13 @@ struct BottomControlsView: View {
         } else if session.isSpoofing {
             session.stop(pairing: pairing)
         } else {
-            guard let pin = session.pin else {
-                session.lastError = "请先点击地图放置图钉。"
+            guard let target = session.selectedTargetCoordinate else {
+                session.lastError = session.targetSelectionMode == .crosshair
+                    ? "尚未取得准星位置，请先移动地图。"
+                    : "请先点击地图放置图钉。"
                 return
             }
-            session.teleport(to: pin, pairing: pairing)
+            session.teleport(to: target, pairing: pairing)
         }
     }
 

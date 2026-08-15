@@ -40,13 +40,14 @@ struct MapHomeView: View {
     @State private var mapPressStartPoint: CGPoint?
     @State private var favoriteToast: String?
     @State private var favoriteToastTask: Task<Void, Never>?
+    @State private var searchNamedCoordinate: CLLocationCoordinate2D?
+    @State private var confirmClearSearchHistory = false
     /// Set when the pin comes from search / a named place so starring keeps the title.
     @State private var pinPlaceName: String?
 
     private var mapStyle: MapStyle {
         switch session.mapStyleIndex {
         case 1: return .hybrid(elevation: .realistic)
-        case 2: return .imagery(elevation: .realistic)
         default: return .standard(elevation: .realistic)
         }
     }
@@ -88,11 +89,13 @@ struct MapHomeView: View {
                                 }
                             )
                             .accessibilityLabel(session.favoriteDisplayName(favorite))
-                            .accessibilityHint("一秒内松手可切换模拟位置，按住一秒显示删除按钮")
+                            .accessibilityHint("半秒内松手可切换模拟位置，按住半秒显示删除按钮")
                         }
                     }
 
-                    if let pin = session.pin, session.favorite(at: pin) == nil {
+                    if session.targetSelectionMode == .pin,
+                       let pin = session.pin,
+                       session.favorite(at: pin) == nil {
                         Annotation("", coordinate: pin, anchor: .bottom) {
                             MapDropPin(
                                 selected: pinSelected,
@@ -136,7 +139,7 @@ struct MapHomeView: View {
                                         suppressNextMapTap = false
                                     }
                                 },
-                                onBuildRouteToPin: buildRouteToCurrentPin,
+                                onBuildRouteToPin: buildRouteToCurrentTarget,
                                 onDragBegan: {
                                     dismissStatusDetails()
                                     searchFocused = false
@@ -194,12 +197,26 @@ struct MapHomeView: View {
                 .mapStyle(mapStyle)
                 .mapControlVisibility(.hidden)
                 .onMapCameraChange(frequency: .continuous) { _ in
-                    guard session.mapStyleIndex != 0,
-                          routeCoords.count > 1 || drawnPath.count > 1 else { return }
-                    routeCameraRevision &+= 1
+                    if session.mapStyleIndex != 0,
+                       routeCoords.count > 1 || drawnPath.count > 1 {
+                        routeCameraRevision &+= 1
+                    }
                 }
                 .onMapCameraChange(frequency: .onEnd) { context in
                     visibleRegion = context.region
+                    session.saveMapRegion(context.region)
+                    if session.targetSelectionMode == .crosshair {
+                        session.crosshairCoordinate = context.region.center
+                        if let named = searchNamedCoordinate,
+                           CLLocation(latitude: named.latitude, longitude: named.longitude)
+                            .distance(from: CLLocation(
+                                latitude: context.region.center.latitude,
+                                longitude: context.region.center.longitude
+                            )) > 15 {
+                            pinPlaceName = nil
+                            searchNamedCoordinate = nil
+                        }
+                    }
                 }
                 .onTapGesture { point in
                     dismissStatusDetails()
@@ -244,7 +261,10 @@ struct MapHomeView: View {
             }
             .background(Color.black.ignoresSafeArea())
 
-            edgeZoomStrip
+            if session.targetSelectionMode == .crosshair, !drawMode, !searchPresented {
+                crosshairTarget
+                    .zIndex(2)
+            }
 
             topChrome
                 .zIndex(3)
@@ -268,7 +288,9 @@ struct MapHomeView: View {
             if searchPresented {
                 VStack(spacing: 8) {
                     Spacer(minLength: 0)
-                    if !searchText.isEmpty && !search.results.isEmpty {
+                    if searchText.isEmpty, session.searchHistoryEnabled, !session.searchHistory.isEmpty {
+                        searchHistoryResults
+                    } else if !searchText.isEmpty && !search.results.isEmpty {
                         searchResults
                     }
                     searchBar
@@ -293,6 +315,16 @@ struct MapHomeView: View {
         }
         .onAppear {
             session.startLocationUpdates()
+            if session.restoreLastMapView, let region = session.savedMapRegion() {
+                position = .region(region)
+                visibleRegion = region
+                if session.targetSelectionMode == .crosshair {
+                    session.crosshairCoordinate = region.center
+                }
+            } else if session.targetSelectionMode == .crosshair,
+                      session.crosshairCoordinate == nil {
+                session.crosshairCoordinate = session.pin ?? session.simulated ?? session.realMapCoordinate
+            }
         }
         .onChange(of: routeReadyState, initial: true) { _, ready in
             generatedRouteReady = ready
@@ -347,6 +379,15 @@ struct MapHomeView: View {
         .onReceive(NotificationCenter.default.publisher(for: .locusRunRoute)) { _ in
             runGeneratedRoute()
         }
+        .onChange(of: session.targetSelectionMode) { _, mode in
+            closePinActions()
+            if mode == .crosshair {
+                session.crosshairCoordinate = visibleRegion?.center ?? session.pin ?? session.simulated ?? session.realMapCoordinate
+            }
+        }
+        .onChange(of: simulatedCoordinateKey) { _, _ in
+            followSimulatedLocationIfNeeded()
+        }
         .onReceive(NotificationCenter.default.publisher(for: .locusCancelDrawingRoute)) { _ in
             cancelDrawingRoute()
         }
@@ -366,6 +407,10 @@ struct MapHomeView: View {
                 onPlay: playRoute,
                 onImportGPX: { showGPXImporter = true },
                 onExportGPX: exportGPX,
+                onBuildRouteToTarget: {
+                    showRouteSheet = false
+                    buildRouteToCurrentTarget()
+                },
                 drawMode: drawMode,
                 onToggleDrawing: {
                     if !drawMode {
@@ -375,13 +420,19 @@ struct MapHomeView: View {
             )
             .presentationDetents([.medium, .large])
         }
+        .alert("清空搜索历史", isPresented: $confirmClearSearchHistory) {
+            Button("清空", role: .destructive) { session.clearSearchHistory() }
+            Button("取消", role: .cancel) {}
+        } message: {
+            Text("此操作无法撤销。")
+        }
     }
 
     private func placePin(at point: CGPoint, proxy: MapProxy) {
         guard let coord = proxy.convert(point, from: .local) else { return }
         if drawMode {
             drawnPath.append(coord)
-        } else {
+        } else if session.targetSelectionMode == .pin {
             session.pin = coord
             pinPlaceName = nil
             pinSelected = false
@@ -389,7 +440,8 @@ struct MapHomeView: View {
     }
 
     private func placeExpandedPin(at point: CGPoint, proxy: MapProxy) {
-        guard !drawMode,
+        guard session.targetSelectionMode == .pin,
+              !drawMode,
               !suppressNextMapTap,
               !isDraggingPin else { return }
         if let pin = session.pin,
@@ -429,6 +481,7 @@ struct MapHomeView: View {
                     mapLongPressTask = Task { @MainActor in
                         try? await Task.sleep(for: .seconds(1))
                         guard !Task.isCancelled,
+                              session.targetSelectionMode == .pin,
                               mapPressStartPoint != nil,
                               !mapLongPressActivated else { return }
                         mapLongPressActivated = true
@@ -464,21 +517,32 @@ struct MapHomeView: View {
             .padding(.bottom, 2)
     }
 
-    private var edgeZoomStrip: some View {
-        GeometryReader { _ in
-            HStack(spacing: 0) {
-                Spacer(minLength: 0)
-                EdgeMapZoomGesture(
-                    onBegan: beginEdgeZoom,
-                    onChanged: updateEdgeZoom,
-                    onEnded: endEdgeZoom
-                )
-                .frame(width: 18)
+    private var crosshairTarget: some View {
+        VStack(spacing: 10) {
+            Image(systemName: "scope")
+                .font(.system(size: 34, weight: .medium))
+                .foregroundStyle(.white)
+                .shadow(color: .black.opacity(0.65), radius: 3, y: 1)
+                .allowsHitTesting(false)
+
+            if session.isSpoofing, !session.isMoving, !session.routePaused,
+               session.selectedTargetCoordinate != nil {
+                Button {
+                    guard let target = session.selectedTargetCoordinate else { return }
+                    UIImpactFeedbackGenerator(style: .light).impactOccurred()
+                    session.teleport(to: target, pairing: pairing)
+                } label: {
+                    Label("应用准星位置", systemImage: "location.fill")
+                        .font(.caption.weight(.semibold))
+                        .padding(.horizontal, 12)
+                        .frame(height: 34)
+                }
+                .buttonStyle(.plain)
+                .foregroundStyle(.black)
+                .locusGlass(.interactive, tint: LocusTheme.accent, in: Capsule())
             }
-            .padding(.vertical, 140)
         }
-        .allowsHitTesting(!searchPresented)
-        .zIndex(1)
+        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .center)
     }
 
     private var searchBar: some View {
@@ -571,6 +635,77 @@ struct MapHomeView: View {
         .frame(maxHeight: 300)
     }
 
+    private var searchHistoryResults: some View {
+        ScrollView {
+            VStack(alignment: .leading, spacing: 0) {
+                HStack {
+                    Label("搜索历史", systemImage: "clock.arrow.circlepath")
+                        .font(.caption.weight(.semibold))
+                        .foregroundStyle(.secondary)
+                    Spacer()
+                    Button {
+                        confirmClearSearchHistory = true
+                    } label: {
+                        Label("清空", systemImage: "trash")
+                            .font(.caption.weight(.semibold))
+                            .foregroundStyle(LocusTheme.danger)
+                    }
+                    .buttonStyle(.plain)
+                }
+                .padding(.horizontal, 14)
+                .frame(height: 42)
+
+                Divider().opacity(0.3)
+
+                ForEach(session.searchHistory.prefix(20)) { entry in
+                    HStack(spacing: 8) {
+                        Button {
+                            select(history: entry)
+                        } label: {
+                            HStack(spacing: 10) {
+                                Image(systemName: "clock.fill")
+                                    .foregroundStyle(LocusTheme.accent)
+                                VStack(alignment: .leading, spacing: 2) {
+                                    Text(entry.title)
+                                        .font(.subheadline.weight(.semibold))
+                                        .foregroundStyle(.primary)
+                                    if !entry.subtitle.isEmpty {
+                                        Text(entry.subtitle)
+                                            .font(.caption)
+                                            .foregroundStyle(.secondary)
+                                            .lineLimit(1)
+                                    }
+                                }
+                                Spacer(minLength: 0)
+                            }
+                            .frame(maxWidth: .infinity, alignment: .leading)
+                            .contentShape(Rectangle())
+                        }
+                        .buttonStyle(.plain)
+
+                        Button {
+                            session.removeSearchHistory(entry)
+                        } label: {
+                            Image(systemName: "xmark.circle.fill")
+                                .foregroundStyle(.secondary)
+                                .frame(width: 36, height: 44)
+                        }
+                        .buttonStyle(.plain)
+                        .accessibilityLabel("删除搜索历史：\(entry.title)")
+                    }
+                    .padding(.leading, 14)
+                    .padding(.trailing, 6)
+                    .frame(minHeight: 54)
+                    Divider().opacity(0.3)
+                }
+            }
+        }
+        .scrollIndicators(.hidden)
+        .locusGlass(.regular, in: RoundedRectangle(cornerRadius: 22, style: .continuous))
+        .contentShape(RoundedRectangle(cornerRadius: 22, style: .continuous))
+        .frame(maxHeight: 300)
+    }
+
     private var rightLowerDynamicControl: some View {
         ZStack(alignment: .bottomTrailing) {
             if session.joystickActive {
@@ -581,9 +716,13 @@ struct MapHomeView: View {
                 .matchedGeometryEffect(id: "rightLowerControl", in: rightLowerControlNamespace)
                 .transition(.scale(scale: 0.55, anchor: .bottomTrailing).combined(with: .opacity))
             } else {
-                rightLowerControls
-                    .matchedGeometryEffect(id: "rightLowerControl", in: rightLowerControlNamespace)
-                    .transition(.scale(scale: 0.55, anchor: .bottomTrailing).combined(with: .opacity))
+                ZStack(alignment: .topTrailing) {
+                    rightLowerControls
+                    railZoomHandle
+                        .offset(x: -(MapChromeLayout.rightColumnWidth + 6), y: 4)
+                }
+                .matchedGeometryEffect(id: "rightLowerControl", in: rightLowerControlNamespace)
+                .transition(.scale(scale: 0.55, anchor: .bottomTrailing).combined(with: .opacity))
             }
         }
         .frame(
@@ -592,6 +731,24 @@ struct MapHomeView: View {
             alignment: .bottomTrailing
         )
         .animation(.spring(response: 0.38, dampingFraction: 0.78), value: session.joystickActive)
+    }
+
+    private var railZoomHandle: some View {
+        EdgeMapZoomGesture(
+            onBegan: beginEdgeZoom,
+            onChanged: updateEdgeZoom,
+            onEnded: endEdgeZoom
+        )
+        .frame(width: 28, height: 104)
+        .overlay {
+            Capsule()
+                .fill(Color.white.opacity(0.35))
+                .frame(width: 3, height: 34)
+                .allowsHitTesting(false)
+        }
+        .locusGlass(.clear, in: Capsule())
+        .accessibilityLabel("地图缩放手势区")
+        .accessibilityHint("按住半秒，向上滑放大，向下滑缩小")
     }
 
     private var rightLowerControls: some View {
@@ -607,7 +764,7 @@ struct MapHomeView: View {
             }
             .buttonStyle(.plain)
             .foregroundStyle(currentPinIsFavorite ? Color.yellow : Color.primary)
-            .disabled(session.pin == nil)
+            .disabled(session.selectedTargetCoordinate == nil)
             .accessibilityLabel(currentPinIsFavorite ? "取消收藏" : "添加收藏")
 
             Divider()
@@ -627,7 +784,7 @@ struct MapHomeView: View {
 
             rightRailIconButton("square.3.layers.3d") {
                 dismissStatusDetails()
-                session.mapStyleIndex = (session.mapStyleIndex + 1) % 3
+                session.mapStyleIndex = (session.mapStyleIndex + 1) % 2
             }
             .accessibilityLabel("切换地图图层")
 
@@ -673,8 +830,8 @@ struct MapHomeView: View {
     }
 
     private var currentPinIsFavorite: Bool {
-        guard let pin = session.pin else { return false }
-        return session.favorite(at: pin) != nil
+        guard let target = session.selectedTargetCoordinate else { return false }
+        return session.favorite(at: target) != nil
     }
 
     /// Centers on the spoofed fix while spoofing, otherwise the real GPS —
@@ -743,13 +900,13 @@ struct MapHomeView: View {
     }
 
     private func toggleCurrentFavorite() {
-        guard let pin = session.pin else { return }
-        let name = session.suggestedFavoriteName(for: pin, fallback: pinPlaceName)
-        let result = session.toggleFavorite(name: name, coordinate: pin)
+        guard let target = session.selectedTargetCoordinate else { return }
+        let name = session.suggestedFavoriteName(for: target, fallback: pinPlaceName)
+        let result = session.toggleFavorite(name: name, coordinate: target)
         pinSelected = false
         pinExpandedActions = false
         UIImpactFeedbackGenerator(style: .light).impactOccurred()
-        if result.added, let favorite = session.favorite(at: pin) {
+        if result.added, let favorite = session.favorite(at: target) {
             withAnimation(.spring(response: 0.3, dampingFraction: 0.82)) {
                 favoriteRenameSuggestion = favorite
             }
@@ -764,7 +921,13 @@ struct MapHomeView: View {
         suppressNextMapTap = true
         pinSelected = false
         pinPlaceName = session.favoriteDisplayName(favorite)
+        searchNamedCoordinate = favorite.coordinate
         session.pin = favorite.coordinate
+        if session.targetSelectionMode == .crosshair {
+            session.crosshairCoordinate = favorite.coordinate
+            let span = visibleRegion?.span ?? MKCoordinateSpan(latitudeDelta: 0.012, longitudeDelta: 0.012)
+            position = .region(MKCoordinateRegion(center: favorite.coordinate, span: span))
+        }
         session.teleport(to: favorite.coordinate, pairing: pairing)
         DispatchQueue.main.asyncAfter(deadline: .now() + 0.15) {
             suppressNextMapTap = false
@@ -787,16 +950,27 @@ struct MapHomeView: View {
         }
     }
 
-    private func buildRouteToCurrentPin() {
-        guard let pin = session.pin else { return }
+    private func buildRouteToCurrentTarget() {
+        guard !session.routeActive, !session.routePaused else {
+            session.lastError = "请先结束当前轨迹，再生成新轨迹。"
+            return
+        }
+        guard let target = session.selectedTargetCoordinate else {
+            session.lastError = session.targetSelectionMode == .crosshair
+                ? "尚未取得准星位置，请先移动地图。"
+                : "请先在地图上放置图钉。"
+            return
+        }
         guard let current = currentRouteLocation else {
             session.lastError = "尚未取得当前定位，请稍后重试。"
             return
         }
         routeStart = current
-        routeEnd = pin
+        routeEnd = target
         closePinActions()
-        showFavoriteToast("正在生成前往图钉的道路轨迹")
+        showFavoriteToast(session.targetSelectionMode == .crosshair
+                          ? "正在生成前往准星的道路轨迹"
+                          : "正在生成前往图钉的道路轨迹")
         buildRoadRoute()
     }
 
@@ -815,6 +989,19 @@ struct MapHomeView: View {
         session.simulated ?? session.realMapCoordinate
     }
 
+    private var simulatedCoordinateKey: String {
+        guard let coordinate = session.simulated else { return "none" }
+        return String(format: "%.7f,%.7f", coordinate.latitude, coordinate.longitude)
+    }
+
+    private func followSimulatedLocationIfNeeded() {
+        guard session.autoFollowRoute,
+              session.routeActive,
+              let simulated = session.simulated else { return }
+        let span = visibleRegion?.span ?? MKCoordinateSpan(latitudeDelta: 0.012, longitudeDelta: 0.012)
+        position = .region(MKCoordinateRegion(center: simulated, span: span))
+    }
+
     private func showFavoriteToast(_ message: String) {
         favoriteToastTask?.cancel()
         withAnimation(.easeOut(duration: 0.18)) {
@@ -830,7 +1017,7 @@ struct MapHomeView: View {
     }
 
     private var searchRegion: MKCoordinateRegion {
-        let center = session.simulated ?? session.pin ?? session.realMapCoordinate ??
+        let center = session.selectedTargetCoordinate ?? session.simulated ?? session.realMapCoordinate ??
             CLLocationCoordinate2D(latitude: 37.3349, longitude: -122.0090)
         return MKCoordinateRegion(center: center, latitudinalMeters: 80_000, longitudinalMeters: 80_000)
     }
@@ -846,14 +1033,11 @@ struct MapHomeView: View {
                let item = response.mapItems.first {
                 let coord = item.placemark.coordinate
                 await MainActor.run {
-                    session.pin = coord
-                    pinPlaceName = item.name ?? query
-                    position = .region(MKCoordinateRegion(center: coord, latitudinalMeters: 1200, longitudinalMeters: 1200))
-                    searchText = ""
-                    search.query = ""
-                    searchFocused = false
-                    searchPresented = false
-                    session.pushNamedRecent(name: item.name ?? query, coordinate: coord)
+                    applySearchResult(
+                        title: item.name ?? query,
+                        subtitle: item.placemark.title ?? "",
+                        coordinate: coord
+                    )
                 }
             } else {
                 await MainActor.run { session.lastError = "没有找到匹配的地点。" }
@@ -869,17 +1053,43 @@ struct MapHomeView: View {
                 let coord = item.placemark.coordinate
                 let title = item.name ?? completion.title
                 await MainActor.run {
-                    session.pin = coord
-                    pinPlaceName = title
-                    position = .region(MKCoordinateRegion(center: coord, latitudinalMeters: 1200, longitudinalMeters: 1200))
-                    searchText = ""
-                    search.query = ""
-                    searchFocused = false
-                    searchPresented = false
-                    session.pushNamedRecent(name: title, coordinate: coord)
+                    applySearchResult(
+                        title: title,
+                        subtitle: completion.subtitle,
+                        coordinate: coord
+                    )
                 }
             }
         }
+    }
+
+    private func select(history entry: SearchHistoryEntry) {
+        applySearchResult(title: entry.title, subtitle: entry.subtitle, coordinate: entry.coordinate)
+    }
+
+    private func applySearchResult(
+        title: String,
+        subtitle: String,
+        coordinate: CLLocationCoordinate2D
+    ) {
+        pinPlaceName = title
+        searchNamedCoordinate = coordinate
+        if session.targetSelectionMode == .pin {
+            session.pin = coordinate
+        } else {
+            session.crosshairCoordinate = coordinate
+        }
+        position = .region(MKCoordinateRegion(
+            center: coordinate,
+            latitudinalMeters: 1200,
+            longitudinalMeters: 1200
+        ))
+        searchText = ""
+        search.query = ""
+        searchFocused = false
+        searchPresented = false
+        session.pushNamedRecent(name: title, coordinate: coordinate)
+        session.recordSearch(title: title, subtitle: subtitle, coordinate: coordinate)
     }
 
     private func buildRoadRoute() {
@@ -1050,11 +1260,10 @@ private struct EdgeMapZoomGesture: View {
         Color.clear
             .contentShape(Rectangle())
             .gesture(zoomGesture)
-            .accessibilityHidden(true)
     }
 
     private var zoomGesture: some Gesture {
-        LongPressGesture(minimumDuration: 0.35)
+        LongPressGesture(minimumDuration: 0.5)
             .sequenced(before: DragGesture(minimumDistance: 0))
             .onChanged { value in
                 switch value {
@@ -1152,9 +1361,10 @@ private struct FavoriteMapMarker: View {
                     pressStarted = true
                     pressCancelled = false
                     isPressing = true
+                    UIImpactFeedbackGenerator(style: .soft).impactOccurred()
                     longPressTask?.cancel()
                     longPressTask = Task { @MainActor in
-                        try? await Task.sleep(for: .seconds(1))
+                        try? await Task.sleep(for: .seconds(0.5))
                         guard !Task.isCancelled, pressStarted, !longPressActivated else { return }
                         longPressActivated = true
                         UIImpactFeedbackGenerator(style: .medium).impactOccurred()

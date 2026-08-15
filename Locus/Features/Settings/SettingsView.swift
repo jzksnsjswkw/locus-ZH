@@ -9,6 +9,12 @@ struct SettingsView: View {
     @State private var showImporter = false
     @State private var showPairOnDevice = false
     @State private var showNameEasterEgg = false
+    @State private var showBackupExporter = false
+    @State private var showBackupImporter = false
+    @State private var backupDocument: LocusBackupDocument?
+    @State private var pendingBackup: LocusBackup?
+    @State private var backupNotice: String?
+    @State private var confirmClearSearchHistory = false
     @State private var tunnelIP = TunnelConfig.targetIP
     @State private var localDevVPNInstalled = LocalDevVPN.isInstalled
     @Environment(\.scenePhase) private var scenePhase
@@ -97,14 +103,59 @@ struct SettingsView: View {
                 }
 
                 Section("隐私") {
-                    Text("所有数据均在设备端处理。收藏数据保存在 UserDefaults 中；无分析统计、无需账户，也不会上传任何内容。")
+                    Text("所有数据均在设备端处理。收藏与搜索历史保存在 UserDefaults 中；无分析统计、无需账户，也不会上传任何内容。Look Around 开启后由 MapKit 向 Apple 请求所选位置的公开街景场景。")
                         .font(.footnote)
                         .foregroundStyle(.secondary)
+                }
+
+                Section("地图与交互") {
+                    Picker("定位点选择方式", selection: $session.targetSelectionMode) {
+                        ForEach(TargetSelectionMode.allCases) { mode in
+                            Label(mode.title, systemImage: mode.icon).tag(mode)
+                        }
+                    }
+
+                    Picker("地图样式", selection: $session.mapStyleIndex) {
+                        Text("标准").tag(0)
+                        Text("卫星混合").tag(1)
+                    }
+
+                    Toggle("Apple Look Around", isOn: $session.lookAroundEnabled)
+                    Toggle("轨迹运行时自动跟随", isOn: $session.autoFollowRoute)
+                    Toggle("启动时恢复上次地图视角", isOn: $session.restoreLastMapView)
+                }
+
+                Section {
+                    Toggle("保存搜索历史", isOn: $session.searchHistoryEnabled)
+                    if !session.searchHistory.isEmpty {
+                        Button("清空搜索历史", role: .destructive) {
+                            confirmClearSearchHistory = true
+                        }
+                    }
+                    Button {
+                        backupDocument = LocusBackupDocument(backup: session.makeBackup())
+                        showBackupExporter = true
+                    } label: {
+                        Label("导出 Locus 备份", systemImage: "square.and.arrow.up")
+                    }
+                    Button {
+                        showBackupImporter = true
+                    } label: {
+                        Label("导入 Locus 备份", systemImage: "square.and.arrow.down")
+                    }
+                } header: {
+                    Text("搜索与数据")
+                } footer: {
+                    Text("备份包含收藏、搜索历史和安全的界面设置，不包含 RPPairing、隧道 IP、正在运行的轨迹或设备连接状态。")
                 }
 
                 Section("关于") {
                     LabeledContent("版本", value: appVersion)
                     LabeledContent("定位引擎", value: "idevice DVT 定位模拟")
+                    Link(destination: URL(string: "https://github.com/Bellaboy/locus-ZH")!) {
+                        LabeledContent("项目主页", value: "Bellaboy/locus-ZH")
+                    }
+                    LabeledContent("原始项目", value: "ChrisMack32/Locus")
                     Text("Locus 是采用 MIT 许可证的免费开源软件。定位注入使用采用 MIT 许可证的 idevice FFI。")
                         .font(.footnote)
                         .foregroundStyle(.secondary)
@@ -157,6 +208,61 @@ struct SettingsView: View {
             .fullScreenCover(isPresented: $showNameEasterEgg) {
                 LocusEasterEggView()
             }
+            .fileExporter(
+                isPresented: $showBackupExporter,
+                document: backupDocument,
+                contentType: .json,
+                defaultFilename: "Locus-Backup"
+            ) { result in
+                if case .failure(let error) = result {
+                    backupNotice = error.localizedDescription
+                }
+            }
+            .fileImporter(
+                isPresented: $showBackupImporter,
+                allowedContentTypes: [.json],
+                allowsMultipleSelection: false
+            ) { result in
+                importBackup(result)
+            }
+            .confirmationDialog(
+                "导入 Locus 备份",
+                isPresented: Binding(
+                    get: { pendingBackup != nil },
+                    set: { if !$0 { pendingBackup = nil } }
+                ),
+                titleVisibility: .visible
+            ) {
+                Button("合并收藏与历史，并应用设置") {
+                    guard let backup = pendingBackup else { return }
+                    do {
+                        try session.applyBackup(backup)
+                        backupNotice = "备份导入完成。"
+                    } catch {
+                        backupNotice = error.localizedDescription
+                    }
+                    pendingBackup = nil
+                }
+                Button("取消", role: .cancel) { pendingBackup = nil }
+            } message: {
+                if let backup = pendingBackup {
+                    Text("将导入 \(backup.favorites.count) 个收藏和 \(backup.searchHistory.count) 条搜索历史；本机同坐标收藏优先保留。")
+                }
+            }
+            .alert("Locus 备份", isPresented: Binding(
+                get: { backupNotice != nil },
+                set: { if !$0 { backupNotice = nil } }
+            )) {
+                Button("确定", role: .cancel) { backupNotice = nil }
+            } message: {
+                Text(backupNotice ?? "")
+            }
+            .alert("清空搜索历史", isPresented: $confirmClearSearchHistory) {
+                Button("清空", role: .destructive) { session.clearSearchHistory() }
+                Button("取消", role: .cancel) {}
+            } message: {
+                Text("此操作无法撤销。")
+            }
             .onAppear {
                 localDevVPNInstalled = LocalDevVPN.isInstalled
             }
@@ -165,6 +271,20 @@ struct SettingsView: View {
                     localDevVPNInstalled = LocalDevVPN.isInstalled
                 }
             }
+        }
+    }
+
+    private func importBackup(_ result: Result<[URL], Error>) {
+        do {
+            guard let url = try result.get().first else { return }
+            let accessing = url.startAccessingSecurityScopedResource()
+            defer { if accessing { url.stopAccessingSecurityScopedResource() } }
+            let data = try Data(contentsOf: url)
+            let decoder = JSONDecoder()
+            decoder.dateDecodingStrategy = .iso8601
+            pendingBackup = try decoder.decode(LocusBackup.self, from: data).validated()
+        } catch {
+            backupNotice = error.localizedDescription
         }
     }
 }

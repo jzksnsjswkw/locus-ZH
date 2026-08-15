@@ -16,7 +16,9 @@ struct MapDropPin: View {
     var onDragEnded: () -> Void
     @State private var tapScale: CGFloat = 1
     @State private var draggingFromLongPress = false
+    @State private var longPressActivated = false
     @State private var suppressTapAfterLongPress = false
+    @GestureState private var isPressing = false
 
     var body: some View {
         ZStack(alignment: .bottom) {
@@ -24,7 +26,10 @@ struct MapDropPin: View {
                 .frame(width: 36, height: 48)
                 .frame(width: 44, height: 48, alignment: .bottom)
                 .shadow(color: .black.opacity(0.35), radius: isDragging ? 8 : 4, y: 2)
-                .scaleEffect(tapScale * (isDragging ? 1.12 : 1), anchor: .bottom)
+                .scaleEffect(
+                    tapScale * (isDragging ? 1.12 : 1) * (isPressing ? 0.94 : 1),
+                    anchor: .bottom
+                )
                 .contentShape(Rectangle())
                 .onTapGesture {
                     guard !suppressTapAfterLongPress else { return }
@@ -39,6 +44,11 @@ struct MapDropPin: View {
                     }
                 }
                 .gesture(dragGesture)
+                .simultaneousGesture(pressFeedbackGesture)
+                .onChange(of: isPressing) { _, pressing in
+                    guard pressing else { return }
+                    UIImpactFeedbackGenerator(style: .soft).impactOccurred()
+                }
 
             if selected && !isDragging {
                 pinActionMenu
@@ -51,6 +61,7 @@ struct MapDropPin: View {
         .animation(.spring(response: 0.28, dampingFraction: 0.78), value: selected)
         .animation(.spring(response: 0.28, dampingFraction: 0.78), value: expandedActions)
         .animation(.easeOut(duration: 0.15), value: isDragging)
+        .animation(.easeOut(duration: 0.12), value: isPressing)
     }
 
     private var pinActionMenu: some View {
@@ -84,20 +95,25 @@ struct MapDropPin: View {
     }
 
     private var dragGesture: some Gesture {
-        LongPressGesture(minimumDuration: 0.35)
+        LongPressGesture(minimumDuration: 1.0)
             .sequenced(before: DragGesture(minimumDistance: 0, coordinateSpace: .global))
             .onChanged { value in
                 switch value {
                 case .first(true):
                     break
                 case .second(true, let drag):
+                    if !longPressActivated {
+                        longPressActivated = true
+                        suppressTapAfterLongPress = true
+                        UIImpactFeedbackGenerator(style: .medium).impactOccurred()
+                        onShowExpandedActions()
+                    }
                     if let drag {
                         let distance = max(abs(drag.translation.width), abs(drag.translation.height))
                         guard distance >= 8 else { break }
                         if !draggingFromLongPress {
                             draggingFromLongPress = true
                             onDragBegan()
-                            UIImpactFeedbackGenerator(style: .medium).impactOccurred()
                         }
                         onDragMoved(drag.location)
                     }
@@ -106,19 +122,24 @@ struct MapDropPin: View {
                 }
             }
             .onEnded { value in
-                if case .second(true, _) = value {
-                    suppressTapAfterLongPress = true
-                    if draggingFromLongPress {
-                        onDragEnded()
-                    } else {
-                        UIImpactFeedbackGenerator(style: .medium).impactOccurred()
-                        onShowExpandedActions()
-                    }
+                let wasActivated = longPressActivated
+                if case .second(true, _) = value, draggingFromLongPress {
+                    onDragEnded()
+                }
+                if wasActivated {
                     DispatchQueue.main.asyncAfter(deadline: .now() + 0.25) {
                         suppressTapAfterLongPress = false
                     }
                 }
                 draggingFromLongPress = false
+                longPressActivated = false
+            }
+    }
+
+    private var pressFeedbackGesture: some Gesture {
+        DragGesture(minimumDistance: 0)
+            .updating($isPressing) { _, pressing, _ in
+                pressing = true
             }
     }
 }

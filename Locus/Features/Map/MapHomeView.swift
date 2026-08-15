@@ -30,6 +30,7 @@ struct MapHomeView: View {
     @State private var selectedFavoriteID: String?
     @State private var isDraggingPin = false
     @State private var suppressNextMapTap = false
+    @State private var mapLongPressActivated = false
     @State private var favoriteToast: String?
     @State private var favoriteToastTask: Task<Void, Never>?
     /// Set when the pin comes from search / a named place so starring keeps the title.
@@ -357,20 +358,30 @@ struct MapHomeView: View {
     }
 
     private func mapLongPressGesture(proxy: MapProxy) -> some Gesture {
-        LongPressGesture(minimumDuration: 0.45)
+        LongPressGesture(minimumDuration: 1.0)
             .sequenced(before: DragGesture(minimumDistance: 0, coordinateSpace: .local))
-            .onEnded { value in
+            .onChanged { value in
                 guard case .second(true, let drag) = value,
+                      !mapLongPressActivated,
                       let drag else { return }
+                mapLongPressActivated = true
                 dismissStatusDetails()
                 placeExpandedPin(at: drag.startLocation, proxy: proxy)
+            }
+            .onEnded { _ in
+                guard mapLongPressActivated else { return }
+                suppressNextMapTap = true
+                mapLongPressActivated = false
+                DispatchQueue.main.asyncAfter(deadline: .now() + 0.25) {
+                    suppressNextMapTap = false
+                }
             }
     }
 
     private var topChrome: some View {
-        HStack(alignment: .top, spacing: 8) {
+        ZStack(alignment: .topTrailing) {
             StatusBarView()
-            Spacer(minLength: 0)
+                .frame(maxWidth: .infinity, alignment: .topLeading)
             if !searchPresented {
                 mapTopControls
             }
@@ -487,7 +498,7 @@ struct MapHomeView: View {
     }
 
     private var mapTopControls: some View {
-        VStack(spacing: 0) {
+        HStack(spacing: 0) {
             topControlButton("square.3.layers.3d", label: "切换地图图层") {
                 dismissStatusDetails()
                 session.mapStyleIndex = (session.mapStyleIndex + 1) % 3
@@ -495,7 +506,7 @@ struct MapHomeView: View {
 
             Divider()
                 .overlay(Color.white.opacity(0.22))
-                .frame(width: 32)
+                .frame(height: 32)
 
             topControlButton("location.fill", label: "回到当前位置") {
                 dismissStatusDetails()
@@ -505,7 +516,7 @@ struct MapHomeView: View {
             }
         }
         .padding(4)
-        .frame(width: MapChromeLayout.rightColumnWidth)
+        .frame(height: MapChromeLayout.rightColumnWidth)
         .locusGlass(.clear, in: Capsule())
         .contentShape(Capsule())
         .foregroundStyle(.primary)
@@ -955,6 +966,7 @@ private struct FavoriteMapMarker: View {
     var selected: Bool
     var onSelect: () -> Void
     var onRemove: () -> Void
+    @GestureState private var isPressing = false
 
     var body: some View {
         ZStack(alignment: .bottom) {
@@ -964,9 +976,15 @@ private struct FavoriteMapMarker: View {
                     .foregroundStyle(.yellow)
                     .shadow(color: .black.opacity(0.45), radius: 2, y: 1)
                     .frame(width: 44, height: 44)
+                    .scaleEffect(isPressing ? 0.92 : 1)
                     .contentShape(Rectangle())
             }
             .buttonStyle(.plain)
+            .simultaneousGesture(pressFeedbackGesture)
+            .onChange(of: isPressing) { _, pressing in
+                guard pressing else { return }
+                UIImpactFeedbackGenerator(style: .soft).impactOccurred()
+            }
 
             if selected {
                 Button(action: onRemove) {
@@ -988,6 +1006,14 @@ private struct FavoriteMapMarker: View {
         // as a background tap and create a replacement pin.
         .frame(width: 160, height: 92, alignment: .bottom)
         .animation(.spring(response: 0.28, dampingFraction: 0.8), value: selected)
+        .animation(.easeOut(duration: 0.12), value: isPressing)
+    }
+
+    private var pressFeedbackGesture: some Gesture {
+        DragGesture(minimumDistance: 0)
+            .updating($isPressing) { _, pressing, _ in
+                pressing = true
+            }
     }
 }
 

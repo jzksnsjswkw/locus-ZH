@@ -425,6 +425,11 @@ struct StatusBarView: View {
         .frame(width: 270, alignment: .leading)
         .locusGlass(.regular, in: RoundedRectangle(cornerRadius: 20, style: .continuous))
         .contentShape(RoundedRectangle(cornerRadius: 20, style: .continuous))
+        .onTapGesture {
+            withAnimation(.easeOut(duration: 0.18)) {
+                showLocationDetails = false
+            }
+        }
     }
 
     private func locationDetailValue(_ title: String, _ value: String) -> some View {
@@ -642,6 +647,7 @@ struct BottomControlsView: View {
                         pausedRouteControls
                     } else {
                         sessionControl
+                            .padding(.leading, 6)
                     }
                 }
         }

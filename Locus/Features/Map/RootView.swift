@@ -861,7 +861,7 @@ struct BottomControlsView: View {
             .frame(maxWidth: .infinity)
             .frame(height: 48)
             .padding(.horizontal, 8)
-            .background(Capsule().fill(sessionControlColor))
+            .locusGlass(.interactive, tint: sessionControlColor, in: Capsule())
             .contentShape(Capsule())
         }
         .buttonStyle(.plain)
@@ -888,7 +888,7 @@ struct BottomControlsView: View {
                     .foregroundStyle(.white)
                     .frame(maxWidth: .infinity)
                     .frame(height: 48)
-                    .background(Capsule().fill(LocusTheme.danger))
+                    .locusGlass(.interactive, tint: LocusTheme.danger, in: Capsule())
             }
             .buttonStyle(.plain)
 
@@ -901,7 +901,7 @@ struct BottomControlsView: View {
                     .foregroundStyle(.black)
                     .frame(maxWidth: .infinity)
                     .frame(height: 48)
-                    .background(Capsule().fill(LocusTheme.accent))
+                    .locusGlass(.interactive, tint: LocusTheme.accent, in: Capsule())
             }
             .buttonStyle(.plain)
         }

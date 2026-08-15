@@ -33,7 +33,6 @@ struct MapHomeView: View {
     @State private var lastLocationButtonTap: Date?
     @State private var isRouting = false
     @State private var showGPXImporter = false
-    @State private var routeSheetDetent: PresentationDetent = .medium
     @State private var drawnPath: [CLLocationCoordinate2D] = []
     @State private var drawMode = false
     @State private var drawnRouteStart: CLLocationCoordinate2D?
@@ -341,9 +340,7 @@ struct MapHomeView: View {
                 importGPX(url)
             }
         }
-        .sheet(isPresented: $showRouteSheet, onDismiss: {
-            routeSheetDetent = .medium
-        }) {
+        .sheet(isPresented: $showRouteSheet) {
             RoutePlannerSheet(
                 onPlay: playRoute,
                 onImportGPX: { showGPXImporter = true },
@@ -359,8 +356,7 @@ struct MapHomeView: View {
                     }
                 }
             )
-            .presentationDetents([.medium, .large], selection: $routeSheetDetent)
-            .locusSheetPresentation(isExpanded: routeSheetDetent == .large)
+            .presentationDetents([.medium, .large])
         }
         .alert("清空搜索历史", isPresented: $confirmClearSearchHistory) {
             Button("清空", role: .destructive) { session.clearSearchHistory() }

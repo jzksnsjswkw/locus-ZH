@@ -16,42 +16,12 @@ enum LocusGlassStyle {
     case interactive
 }
 
-/// A transparent presentation surface that lets the map remain visible.
-/// On iOS 26+ this is real Liquid Glass; older systems use a material fallback.
-private struct LocusSheetGlassBackground: View {
-    @Environment(\.colorScheme) private var colorScheme
-    var isExpanded: Bool
-
-    var body: some View {
-        Group {
-            if #available(iOS 26.0, *) {
-                Color.clear
-                    .glassEffect(.regular, in: Rectangle())
-            } else {
-                Rectangle()
-                    .fill(.ultraThinMaterial)
-            }
-        }
-        .overlay(expandedReadabilityTint)
-        .ignoresSafeArea()
-        .allowsHitTesting(false)
-        .animation(.easeInOut(duration: 0.22), value: isExpanded)
-    }
-
-    private var expandedReadabilityTint: Color {
-        guard isExpanded else { return .clear }
-        return colorScheme == .dark
-            ? Color.black.opacity(0.20)
-            : Color.white.opacity(0.14)
-    }
-}
-
-/// A stronger blur reserved for grouped rows so text stays readable while the
-/// surrounding sheet continues to show the map through the glass.
+/// Sheet presentation itself stays system-owned. Only grouped rows add a
+/// stronger native material so labels remain readable over the system glass.
 private struct LocusSheetRowBackground: View {
     var body: some View {
         Rectangle()
-            .fill(.regularMaterial)
+            .fill(.thickMaterial)
     }
 }
 
@@ -105,14 +75,8 @@ extension View {
         locusGlass(style, tint: tint, in: RoundedRectangle(cornerRadius: 20, style: .continuous))
     }
 
-    func locusSheetPresentation(isExpanded: Bool) -> some View {
-        background {
-            LocusSheetGlassBackground(isExpanded: isExpanded)
-        }
-        .presentationBackground(.clear)
-    }
-
-    /// Keeps grouped sheet rows readable without making the whole sheet opaque.
+    /// Keeps grouped sheet rows readable while the system presents the native
+    /// Liquid Glass sheet behind the transparent list content.
     func locusSheetRows() -> some View {
         listRowBackground(LocusSheetRowBackground())
     }

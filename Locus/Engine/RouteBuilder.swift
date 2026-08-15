@@ -2,42 +2,118 @@ import CoreLocation
 import Foundation
 import MapKit
 
+struct PlannedRoute: Identifiable {
+    let id = UUID()
+    let coordinates: [CLLocationCoordinate2D]
+    let distance: CLLocationDistance
+    let expectedTravelTime: TimeInterval
+}
+
 enum RouteBuilder {
     static func roadRoute(
         from start: CLLocationCoordinate2D,
         to end: CLLocationCoordinate2D,
         mode: TravelMode
     ) async throws -> [CLLocationCoordinate2D] {
-        let candidates: [(CLLocationCoordinate2D, CLLocationCoordinate2D)] = [
-            (start, end),
-            (
-                ChinaCoordinateTransform.mapCoordinateToSystemCoordinate(start),
-                ChinaCoordinateTransform.mapCoordinateToSystemCoordinate(end)
-            )
-        ]
+        let routes = try await roadRoutes(
+            from: start,
+            to: end,
+            via: [],
+            mode: mode,
+            requestsAlternatives: false
+        )
+        return routes.first?.coordinates ?? sample(coordinates: [start, end], every: 10)
+    }
 
-        for (candidateStart, candidateEnd) in candidates {
-            let request = MKDirections.Request()
-            request.source = MKMapItem(placemark: MKPlacemark(coordinate: candidateStart))
-            request.destination = MKMapItem(placemark: MKPlacemark(coordinate: candidateEnd))
-            request.transportType = mode.mkTransportType
-            request.requestsAlternateRoutes = false
-
-            if let response = try? await MKDirections(request: request).calculate(),
-               let route = response.routes.first {
-                let coordinates = sample(polyline: route.polyline, every: 12)
-                // Keep all UI/route playback coordinates in the map coordinate system.
-                if ChinaCoordinateTransform.usesMainlandChinaOffset(start),
-                   candidateStart.latitude != start.latitude {
-                    return coordinates.map(ChinaCoordinateTransform.systemCoordinateToMapCoordinate)
-                }
-                return coordinates
-            }
+    static func roadRoutes(
+        from start: CLLocationCoordinate2D,
+        to end: CLLocationCoordinate2D,
+        via waypoints: [CLLocationCoordinate2D],
+        mode: TravelMode,
+        requestsAlternatives: Bool
+    ) async throws -> [PlannedRoute] {
+        let mapPoints = [start] + waypoints + [end]
+        var candidates: [([CLLocationCoordinate2D], Bool)] = [(mapPoints, false)]
+        if ChinaCoordinateTransform.usesMainlandChinaOffset(start) {
+            candidates.append((
+                mapPoints.map(ChinaCoordinateTransform.mapCoordinateToSystemCoordinate),
+                true
+            ))
         }
 
-        // Apple Directions can be unavailable on some networks. Keep Build Walk
-        // usable with a deterministic direct route instead of failing the action.
-        return sample(coordinates: [start, end], every: 10)
+        for (candidatePoints, convertsBackToMapCoordinates) in candidates {
+            var segmentOptions: [[PlannedRoute]] = []
+            for (segmentStart, segmentEnd) in zip(candidatePoints, candidatePoints.dropFirst()) {
+                let request = MKDirections.Request()
+                request.source = MKMapItem(placemark: MKPlacemark(coordinate: segmentStart))
+                request.destination = MKMapItem(placemark: MKPlacemark(coordinate: segmentEnd))
+                request.transportType = mode.mkTransportType
+                request.requestsAlternateRoutes = requestsAlternatives
+
+                guard let response = try? await MKDirections(request: request).calculate(),
+                      !response.routes.isEmpty else {
+                    segmentOptions.removeAll()
+                    break
+                }
+
+                let options = response.routes.prefix(requestsAlternatives ? 3 : 1).map { route in
+                    var coordinates = sample(polyline: route.polyline, every: 12)
+                    if convertsBackToMapCoordinates {
+                        coordinates = coordinates.map(ChinaCoordinateTransform.systemCoordinateToMapCoordinate)
+                    }
+                    return PlannedRoute(
+                        coordinates: coordinates,
+                        distance: route.distance,
+                        expectedTravelTime: route.expectedTravelTime
+                    )
+                }
+                segmentOptions.append(options)
+            }
+
+            guard segmentOptions.count == mapPoints.count - 1 else { continue }
+            let optionCount = min(3, segmentOptions.map(\.count).max() ?? 1)
+            var combinedRoutes: [PlannedRoute] = []
+            var signatures = Set<String>()
+
+            for optionIndex in 0..<optionCount {
+                var coordinates: [CLLocationCoordinate2D] = []
+                var distance: CLLocationDistance = 0
+                var expectedTravelTime: TimeInterval = 0
+                for options in segmentOptions {
+                    let segment = options[optionIndex < options.count ? optionIndex : 0]
+                    coordinates.append(contentsOf: coordinates.isEmpty ? segment.coordinates[...] : segment.coordinates.dropFirst())
+                    distance += segment.distance
+                    expectedTravelTime += segment.expectedTravelTime
+                }
+                guard coordinates.count > 1 else { continue }
+                let middle = coordinates[coordinates.count / 2]
+                let signature = String(
+                    format: "%.4f,%.4f-%d-%d",
+                    middle.latitude,
+                    middle.longitude,
+                    Int(distance / 50),
+                    Int(expectedTravelTime / 30)
+                )
+                guard signatures.insert(signature).inserted else { continue }
+                combinedRoutes.append(PlannedRoute(
+                    coordinates: coordinates,
+                    distance: distance,
+                    expectedTravelTime: expectedTravelTime
+                ))
+            }
+            if !combinedRoutes.isEmpty { return combinedRoutes }
+        }
+
+        let fallback = sample(coordinates: mapPoints, every: 10)
+        let distance = zip(mapPoints, mapPoints.dropFirst()).reduce(0.0) { result, pair in
+            result + CLLocation(latitude: pair.0.latitude, longitude: pair.0.longitude)
+                .distance(from: CLLocation(latitude: pair.1.latitude, longitude: pair.1.longitude))
+        }
+        return [PlannedRoute(
+            coordinates: fallback,
+            distance: distance,
+            expectedTravelTime: distance / max(0.1, mode.baseSpeed)
+        )]
     }
 
     static func sample(polyline: MKPolyline, every meters: CLLocationDistance) -> [CLLocationCoordinate2D] {

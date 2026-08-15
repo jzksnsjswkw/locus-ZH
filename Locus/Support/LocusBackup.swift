@@ -38,7 +38,6 @@ struct BackupPreferences: Codable {
     var routeLoopCount: Int
     var mapStyleIndex: Int
     var targetSelectionMode: String
-    var lookAroundEnabled: Bool
     var searchHistoryEnabled: Bool
     var autoFollowRoute: Bool
     var restoreLastMapView: Bool

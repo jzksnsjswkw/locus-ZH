@@ -59,6 +59,7 @@ extension Notification.Name {
     static let locusImportGPX = Notification.Name("locusImportGPX")
     static let locusDeleteRoute = Notification.Name("locusDeleteRoute")
     static let locusRunRoute = Notification.Name("locusRunRoute")
+    static let locusBuildRouteToTarget = Notification.Name("locusBuildRouteToTarget")
     static let locusCancelDrawingRoute = Notification.Name("locusCancelDrawingRoute")
     static let locusUndoDrawingPoint = Notification.Name("locusUndoDrawingPoint")
     static let locusSaveDrawingRoute = Notification.Name("locusSaveDrawingRoute")

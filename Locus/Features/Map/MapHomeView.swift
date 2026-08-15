@@ -9,18 +9,19 @@ struct MapHomeView: View {
     @Binding var searchPresented: Bool
     @Binding var showRouteSheet: Bool
     @Binding var generatedRouteReady: Bool
+    @Binding var routeOptions: [PlannedRoute]
+    @Binding var selectedRouteOptionID: UUID?
     @Binding var drawingRouteActive: Bool
     @Binding var drawingRoutePointCount: Int
-    @Binding var streetViewActive: Bool
 
     @StateObject private var search = PlaceSearchCompleter()
     @Namespace private var rightLowerControlNamespace
-    @Namespace private var streetViewNamespace
     @State private var position: MapCameraPosition = .userLocation(fallback: .automatic)
     @State private var searchText = ""
     @FocusState private var searchFocused: Bool
     @State private var routeStart: CLLocationCoordinate2D?
     @State private var routeEnd: CLLocationCoordinate2D?
+    @State private var routeWaypoints: [CLLocationCoordinate2D] = []
     @State private var routeCoords: [CLLocationCoordinate2D] = []
     @State private var routeIsHandDrawn = false
     @State private var routeCameraRevision: UInt = 0
@@ -28,13 +29,6 @@ struct MapHomeView: View {
     @State private var visibleCamera: MapCamera?
     @State private var edgeZoomStartRegion: MKCoordinateRegion?
     @State private var lastLocationButtonTap: Date?
-    @State private var lookAroundScene: MKLookAroundScene?
-    @State private var lookAroundCoordinate: CLLocationCoordinate2D?
-    @State private var lookAroundAvailable = false
-    @State private var lookAroundAvailabilityRequest: MKLookAroundSceneRequest?
-    @State private var lookAroundAvailabilityTask: Task<Void, Never>?
-    @State private var lookAroundRequest: MKLookAroundSceneRequest?
-    @State private var lookAroundUpdateTask: Task<Void, Never>?
     @State private var isRouting = false
     @State private var showGPXImporter = false
     @State private var drawnPath: [CLLocationCoordinate2D] = []
@@ -85,7 +79,11 @@ struct MapHomeView: View {
                                     selectedFavoriteID = favorite.id
                                     pinSelected = false
                                     pinExpandedActions = false
-                                    selectFavorite(favorite)
+                                    if session.targetSelectionMode != .crosshair {
+                                        selectFavorite(favorite)
+                                    } else {
+                                        UISelectionFeedbackGenerator().selectionChanged()
+                                    }
                                 },
                                 onLongPress: {
                                     dismissStatusDetails()
@@ -100,7 +98,9 @@ struct MapHomeView: View {
                                 }
                             )
                             .accessibilityLabel(session.favoriteDisplayName(favorite))
-                            .accessibilityHint("半秒内松手可切换模拟位置，按住半秒显示删除按钮")
+                            .accessibilityHint(session.targetSelectionMode == .crosshair
+                                               ? "轻点显示删除按钮"
+                                               : "半秒内松手可切换模拟位置，按住半秒显示删除按钮")
                         }
                     }
 
@@ -183,12 +183,27 @@ struct MapHomeView: View {
                             }
                         }
                     }
-                    if routeCoords.count > 1, session.mapStyleIndex == 0 {
-                        MapPolyline(coordinates: routeCoords)
-                            .stroke(
-                                presentedRouteColor,
-                                style: presentedRouteStrokeStyle
-                            )
+                    ForEach(routeWaypoints.indices, id: \.self) { index in
+                        Annotation("途经点 \(index + 1)", coordinate: routeWaypoints[index], anchor: .bottom) {
+                            RouteWaypointMarker(number: index + 1)
+                        }
+                    }
+                    if session.mapStyleIndex == 0 {
+                        if routeOptions.isEmpty {
+                            if routeCoords.count > 1 {
+                                MapPolyline(coordinates: routeCoords)
+                                    .stroke(presentedRouteColor, style: presentedRouteStrokeStyle)
+                            }
+                        } else {
+                            ForEach(routeOptions.filter { $0.id != selectedRouteOptionID }) { option in
+                                MapPolyline(coordinates: option.coordinates)
+                                    .stroke(unselectedRouteColor, lineWidth: 4)
+                            }
+                            if let selectedPlannedRoute {
+                                MapPolyline(coordinates: selectedPlannedRoute.coordinates)
+                                    .stroke(selectedRouteColor, lineWidth: 6)
+                            }
+                        }
                     }
                     if drawnPath.count > 1, session.mapStyleIndex == 0 {
                         MapPolyline(coordinates: drawnPath)
@@ -229,9 +244,6 @@ struct MapHomeView: View {
                             searchNamedCoordinate = nil
                         }
                     }
-                    if !streetViewActive {
-                        scheduleLookAroundAvailabilityCheck(for: context.region)
-                    }
                 }
                 .onTapGesture { point in
                     dismissStatusDetails()
@@ -247,13 +259,31 @@ struct MapHomeView: View {
                 .overlay {
                     if session.mapStyleIndex != 0 {
                         ZStack {
-                            if routeCoords.count > 1 {
+                            if routeOptions.isEmpty, routeCoords.count > 1 {
                                 ScreenFixedRouteOverlay(
                                     coordinates: routeCoords,
                                     proxy: proxy,
                                     cameraRevision: routeCameraRevision,
                                     color: presentedRouteColor,
                                     strokeStyle: presentedRouteStrokeStyle
+                                )
+                            }
+                            ForEach(routeOptions.filter { $0.id != selectedRouteOptionID }) { option in
+                                ScreenFixedRouteOverlay(
+                                    coordinates: option.coordinates,
+                                    proxy: proxy,
+                                    cameraRevision: routeCameraRevision,
+                                    color: unselectedRouteColor,
+                                    strokeStyle: StrokeStyle(lineWidth: 4, lineCap: .round, lineJoin: .round)
+                                )
+                            }
+                            if let selectedPlannedRoute {
+                                ScreenFixedRouteOverlay(
+                                    coordinates: selectedPlannedRoute.coordinates,
+                                    proxy: proxy,
+                                    cameraRevision: routeCameraRevision,
+                                    color: selectedRouteColor,
+                                    strokeStyle: StrokeStyle(lineWidth: 6, lineCap: .round, lineJoin: .round)
                                 )
                             }
                             if drawnPath.count > 1 {
@@ -276,17 +306,15 @@ struct MapHomeView: View {
             }
             .background(Color(uiColor: .systemBackground).ignoresSafeArea())
 
-            if session.targetSelectionMode == .crosshair, !drawMode, !searchPresented, !streetViewActive {
+            if session.targetSelectionMode == .crosshair, !drawMode, !searchPresented {
                 crosshairTarget
                     .zIndex(2)
             }
 
-            if !streetViewActive {
-                topChrome
-                    .zIndex(3)
-            }
+            topChrome
+                .zIndex(3)
 
-            if !searchPresented, !streetViewActive {
+            if !searchPresented {
                 VStack {
                     Spacer()
                     HStack {
@@ -302,42 +330,7 @@ struct MapHomeView: View {
                 .zIndex(2)
             }
 
-            if streetViewEntryVisible,
-               !searchPresented,
-               !streetViewActive,
-               !session.joystickActive,
-               !session.routeActive,
-               !session.routePaused,
-               !generatedRouteReady,
-               !drawingRouteActive {
-                VStack {
-                    Spacer()
-                    HStack {
-                        Button(action: openStreetView) {
-                            Image(systemName: "binoculars.fill")
-                                .font(.body.weight(.semibold))
-                                .frame(
-                                    width: MapChromeLayout.rightColumnWidth,
-                                    height: MapChromeLayout.rightColumnWidth
-                                )
-                                .contentShape(Circle())
-                        }
-                        .buttonStyle(.plain)
-                        .foregroundStyle(.blue)
-                        .locusGlass(.interactive, in: Circle())
-                        .matchedGeometryEffect(id: "streetPreview", in: streetViewNamespace)
-                        .transition(.scale.combined(with: .opacity))
-                        .accessibilityLabel("打开街景")
-
-                        Spacer()
-                    }
-                    .padding(.leading, 16)
-                    .padding(.bottom, bottomControlClearance)
-                }
-                .zIndex(2)
-            }
-
-            if searchPresented, !streetViewActive {
+            if searchPresented {
                 VStack(spacing: 8) {
                     Spacer(minLength: 0)
                     if searchText.isEmpty, session.searchHistoryEnabled, !session.searchHistory.isEmpty {
@@ -353,7 +346,7 @@ struct MapHomeView: View {
                 .zIndex(4)
             }
 
-            if let favoriteToast, !streetViewActive {
+            if let favoriteToast {
                 Text(favoriteToast)
                     .font(.subheadline.weight(.semibold))
                     .padding(.horizontal, 14)
@@ -365,18 +358,6 @@ struct MapHomeView: View {
                     .zIndex(3)
             }
 
-            if streetViewActive,
-               let coordinate = lookAroundCoordinate {
-                StreetViewMode(
-                    scene: $lookAroundScene,
-                    confirmedCoordinate: coordinate,
-                    namespace: streetViewNamespace,
-                    onMapCenterChanged: requestStreetViewScene,
-                    onDone: closeStreetView
-                )
-                .transition(.opacity)
-                .zIndex(10)
-            }
         }
         .onAppear {
             session.startLocationUpdates()
@@ -407,16 +388,9 @@ struct MapHomeView: View {
             favoriteToastTask?.cancel()
             favoriteToastTask = nil
             favoriteToast = nil
-            lookAroundUpdateTask?.cancel()
-            lookAroundUpdateTask = nil
-            lookAroundAvailabilityTask?.cancel()
-            lookAroundAvailabilityTask = nil
-            lookAroundAvailabilityRequest?.cancel()
-            lookAroundAvailabilityRequest = nil
-            lookAroundRequest?.cancel()
-            lookAroundRequest = nil
-            streetViewActive = false
             generatedRouteReady = false
+            routeOptions.removeAll()
+            selectedRouteOptionID = nil
             drawingRouteActive = false
             drawingRoutePointCount = 0
         }
@@ -453,18 +427,19 @@ struct MapHomeView: View {
         .onReceive(NotificationCenter.default.publisher(for: .locusRunRoute)) { _ in
             runGeneratedRoute()
         }
+        .onReceive(NotificationCenter.default.publisher(for: .locusBuildRouteToTarget)) { _ in
+            buildRouteToCurrentTarget()
+        }
         .onChange(of: session.targetSelectionMode) { _, mode in
             closePinActions()
             if mode == .crosshair {
                 session.crosshairCoordinate = visibleRegion?.center ?? session.pin ?? session.simulated ?? session.realMapCoordinate
             }
         }
-        .onChange(of: session.lookAroundEnabled) { _, enabled in
-            if enabled, let visibleRegion {
-                scheduleLookAroundAvailabilityCheck(for: visibleRegion, immediately: true)
-            } else if !enabled {
-                clearLookAroundState()
-            }
+        .onChange(of: selectedRouteOptionID) { _, selectedID in
+            guard let selectedID,
+                  let option = routeOptions.first(where: { $0.id == selectedID }) else { return }
+            routeCoords = option.coordinates
         }
         .onChange(of: simulatedCoordinateKey) { _, _ in
             followSimulatedLocationIfNeeded()
@@ -500,6 +475,7 @@ struct MapHomeView: View {
                 }
             )
             .presentationDetents([.medium, .large])
+            .presentationBackground(.regularMaterial)
         }
         .alert("清空搜索历史", isPresented: $confirmClearSearchHistory) {
             Button("清空", role: .destructive) { session.clearSearchHistory() }
@@ -552,6 +528,47 @@ struct MapHomeView: View {
         }
     }
 
+    private func handleMapLongPress(at point: CGPoint, proxy: MapProxy) {
+        guard !hitsInteractiveMarker(at: point, proxy: proxy),
+              let coordinate = proxy.convert(point, from: .local) else { return }
+        if canAddRouteWaypoint,
+           ChinaCoordinateTransform.usesMainlandChinaOffset(coordinate) {
+            suppressNextMapTap = true
+            routeWaypoints.append(coordinate)
+            UIImpactFeedbackGenerator(style: .medium).impactOccurred()
+            showFavoriteToast("已添加途经点 \(routeWaypoints.count)，正在重新规划")
+            buildRoadRoute()
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) {
+                suppressNextMapTap = false
+            }
+        } else if session.targetSelectionMode == .pin {
+            placeExpandedPin(at: point, proxy: proxy)
+        }
+    }
+
+    private func hitsInteractiveMarker(at point: CGPoint, proxy: MapProxy) -> Bool {
+        if session.favorites.contains(where: { favorite in
+            guard let markerPoint = proxy.convert(favorite.coordinate, to: .local) else { return false }
+            return hypot(markerPoint.x - point.x, markerPoint.y - point.y) <= 36
+        }) {
+            return true
+        }
+
+        if session.targetSelectionMode == .pin,
+           let pin = session.pin,
+           let markerPoint = proxy.convert(pin, to: .local) {
+            let hitArea = CGRect(
+                x: markerPoint.x - 36,
+                y: markerPoint.y - 76,
+                width: 72,
+                height: 92
+            )
+            if hitArea.contains(point) { return true }
+        }
+
+        return false
+    }
+
     private func mapLongPressGesture(proxy: MapProxy) -> some Gesture {
         DragGesture(minimumDistance: 0, coordinateSpace: .local)
             .onChanged { value in
@@ -560,14 +577,13 @@ struct MapHomeView: View {
                     mapPressStartPoint = startPoint
                     mapLongPressTask?.cancel()
                     mapLongPressTask = Task { @MainActor in
-                        try? await Task.sleep(for: .seconds(1))
+                        try? await Task.sleep(for: .seconds(0.5))
                         guard !Task.isCancelled,
-                              session.targetSelectionMode == .pin,
                               mapPressStartPoint != nil,
                               !mapLongPressActivated else { return }
                         mapLongPressActivated = true
                         dismissStatusDetails()
-                        placeExpandedPin(at: startPoint, proxy: proxy)
+                        handleMapLongPress(at: startPoint, proxy: proxy)
                     }
                 }
 
@@ -898,6 +914,28 @@ struct MapHomeView: View {
         routeCoords.count > 1 && !drawMode && !session.routeActive && !session.routePaused
     }
 
+    private var canAddRouteWaypoint: Bool {
+        guard let routeStart else { return false }
+        return routeReadyState &&
+            !routeIsHandDrawn &&
+            !isRouting &&
+            routeEnd != nil &&
+            ChinaCoordinateTransform.usesMainlandChinaOffset(routeStart)
+    }
+
+    private var selectedPlannedRoute: PlannedRoute? {
+        guard let selectedRouteOptionID else { return routeOptions.first }
+        return routeOptions.first(where: { $0.id == selectedRouteOptionID }) ?? routeOptions.first
+    }
+
+    private var selectedRouteColor: Color {
+        Color(red: 0.0, green: 0.42, blue: 0.24)
+    }
+
+    private var unselectedRouteColor: Color {
+        Color(red: 0.39, green: 0.78, blue: 0.55).opacity(0.72)
+    }
+
     private var presentedRouteColor: Color {
         routeIsHandDrawn ? LocusTheme.accentSecondary : LocusTheme.accent
     }
@@ -972,135 +1010,6 @@ struct MapHomeView: View {
                 pitch: camera.pitch
             ))
         }
-    }
-
-    private var streetViewEntryVisible: Bool {
-        guard session.lookAroundEnabled, let visibleRegion else { return false }
-        return lookAroundAvailable &&
-            visibleRegion.span.latitudeDelta <= 0.02 &&
-            visibleRegion.span.longitudeDelta <= 0.02
-    }
-
-    private func scheduleLookAroundAvailabilityCheck(
-        for region: MKCoordinateRegion,
-        immediately: Bool = false
-    ) {
-        lookAroundAvailabilityTask?.cancel()
-        lookAroundAvailabilityTask = nil
-        lookAroundAvailabilityRequest?.cancel()
-        lookAroundAvailabilityRequest = nil
-        lookAroundAvailable = false
-
-        guard session.lookAroundEnabled,
-              region.span.latitudeDelta <= 0.02,
-              region.span.longitudeDelta <= 0.02 else { return }
-
-        lookAroundAvailabilityTask = Task { @MainActor in
-            if !immediately {
-                try? await Task.sleep(for: .milliseconds(450))
-            }
-            guard !Task.isCancelled, !streetViewActive else { return }
-            let request = MKLookAroundSceneRequest(
-                coordinate: ChinaCoordinateTransform.mapCoordinateToSystemCoordinate(region.center)
-            )
-            lookAroundAvailabilityRequest = request
-            request.getSceneWithCompletionHandler { scene, _ in
-                DispatchQueue.main.async {
-                    guard self.lookAroundAvailabilityRequest === request,
-                          !self.streetViewActive else { return }
-                    self.lookAroundAvailabilityRequest = nil
-                    self.lookAroundAvailable = scene != nil
-                }
-            }
-        }
-    }
-
-    private func requestStreetViewScene(at coordinate: CLLocationCoordinate2D) {
-        guard streetViewActive else { return }
-        lookAroundUpdateTask?.cancel()
-        lookAroundUpdateTask = Task { @MainActor in
-            try? await Task.sleep(for: .milliseconds(350))
-            guard !Task.isCancelled else { return }
-            loadLookAroundScene(at: coordinate, exitStreetViewOnFailure: false)
-        }
-    }
-
-    private func loadLookAroundScene(
-        at mapCoordinate: CLLocationCoordinate2D,
-        exitStreetViewOnFailure: Bool
-    ) {
-        lookAroundRequest?.cancel()
-        let request = MKLookAroundSceneRequest(
-            coordinate: ChinaCoordinateTransform.mapCoordinateToSystemCoordinate(mapCoordinate)
-        )
-        lookAroundRequest = request
-        request.getSceneWithCompletionHandler { scene, _ in
-            DispatchQueue.main.async {
-                guard self.lookAroundRequest === request else { return }
-                self.lookAroundRequest = nil
-                guard let scene else {
-                    if exitStreetViewOnFailure {
-                        self.streetViewActive = false
-                        self.lookAroundScene = nil
-                        self.lookAroundCoordinate = nil
-                        self.session.lastError = "此位置暂无 Apple 街景。"
-                    }
-                    return
-                }
-                self.lookAroundScene = scene
-                self.lookAroundCoordinate = mapCoordinate
-            }
-        }
-    }
-
-    private func openStreetView() {
-        guard session.lookAroundEnabled,
-              lookAroundAvailable,
-              let coordinate = visibleRegion?.center else { return }
-        lookAroundAvailabilityTask?.cancel()
-        lookAroundAvailabilityTask = nil
-        lookAroundAvailabilityRequest?.cancel()
-        lookAroundAvailabilityRequest = nil
-        dismissStatusDetails()
-        searchPresented = false
-        lookAroundScene = nil
-        lookAroundCoordinate = coordinate
-        UIImpactFeedbackGenerator(style: .light).impactOccurred()
-        withAnimation(.spring(response: 0.42, dampingFraction: 0.84)) {
-            streetViewActive = true
-        }
-        loadLookAroundScene(at: coordinate, exitStreetViewOnFailure: true)
-    }
-
-    private func closeStreetView() {
-        lookAroundUpdateTask?.cancel()
-        lookAroundUpdateTask = nil
-        lookAroundRequest?.cancel()
-        lookAroundRequest = nil
-        UISelectionFeedbackGenerator().selectionChanged()
-        withAnimation(.spring(response: 0.38, dampingFraction: 0.86)) {
-            streetViewActive = false
-        }
-        lookAroundScene = nil
-        lookAroundCoordinate = nil
-        if let visibleRegion {
-            scheduleLookAroundAvailabilityCheck(for: visibleRegion, immediately: true)
-        }
-    }
-
-    private func clearLookAroundState() {
-        lookAroundAvailabilityTask?.cancel()
-        lookAroundAvailabilityTask = nil
-        lookAroundAvailabilityRequest?.cancel()
-        lookAroundAvailabilityRequest = nil
-        lookAroundUpdateTask?.cancel()
-        lookAroundUpdateTask = nil
-        lookAroundRequest?.cancel()
-        lookAroundRequest = nil
-        lookAroundScene = nil
-        lookAroundCoordinate = nil
-        lookAroundAvailable = false
-        streetViewActive = false
     }
 
     private func beginEdgeZoom() {
@@ -1206,6 +1115,7 @@ struct MapHomeView: View {
         }
         routeStart = current
         routeEnd = target
+        routeWaypoints.removeAll()
         closePinActions()
         showFavoriteToast(session.targetSelectionMode == .crosshair
                           ? "正在生成前往准星的道路轨迹"
@@ -1340,14 +1250,22 @@ struct MapHomeView: View {
         isRouting = true
         Task {
             do {
-                let coords = try await RouteBuilder.roadRoute(from: start, to: end, mode: session.travelMode)
+                let options = try await RouteBuilder.roadRoutes(
+                    from: start,
+                    to: end,
+                    via: routeWaypoints,
+                    mode: session.travelMode,
+                    requestsAlternatives: ChinaCoordinateTransform.usesMainlandChinaOffset(start)
+                )
                 await MainActor.run {
                     drawnPath.removeAll()
                     drawnRouteStart = nil
                     drawnRouteEnd = nil
                     drawMode = false
                     routeIsHandDrawn = false
-                    routeCoords = coords
+                    routeOptions = options
+                    selectedRouteOptionID = options.first?.id
+                    routeCoords = options.first?.coordinates ?? []
                     isRouting = false
                     UINotificationFeedbackGenerator().notificationOccurred(.success)
                     showFavoriteToast("道路轨迹已生成")
@@ -1362,6 +1280,11 @@ struct MapHomeView: View {
     }
 
     private func playRoute() {
+        if let selectedPlannedRoute {
+            routeOptions = [selectedPlannedRoute]
+            selectedRouteOptionID = selectedPlannedRoute.id
+            routeCoords = selectedPlannedRoute.coordinates
+        }
         let path = routeCoords
         guard path.count >= 2 else {
             session.lastError = "请先规划、手绘或导入一条轨迹。"
@@ -1391,6 +1314,9 @@ struct MapHomeView: View {
     private func clearRoutePresentation() {
         session.discardRoute()
         routeCoords.removeAll()
+        routeOptions.removeAll()
+        selectedRouteOptionID = nil
+        routeWaypoints.removeAll()
         drawnPath.removeAll()
         drawnRouteStart = nil
         drawnRouteEnd = nil
@@ -1403,6 +1329,9 @@ struct MapHomeView: View {
     private func beginDrawingRoute() {
         session.discardRoute()
         routeCoords.removeAll()
+        routeOptions.removeAll()
+        selectedRouteOptionID = nil
+        routeWaypoints.removeAll()
         drawnPath.removeAll()
         drawnRouteStart = nil
         drawnRouteEnd = nil
@@ -1441,6 +1370,9 @@ struct MapHomeView: View {
         drawnRouteStart = start
         drawnRouteEnd = end
         routeIsHandDrawn = true
+        routeOptions.removeAll()
+        selectedRouteOptionID = nil
+        routeWaypoints.removeAll()
         routeCoords = RouteBuilder.sample(coordinates: drawnPath, every: 10)
         drawnPath.removeAll()
         drawMode = false
@@ -1456,6 +1388,9 @@ struct MapHomeView: View {
             drawnRouteEnd = nil
             drawMode = false
             routeIsHandDrawn = false
+            routeOptions.removeAll()
+            selectedRouteOptionID = nil
+            routeWaypoints.removeAll()
             routeCoords = RouteBuilder.sample(coordinates: coords, every: 10)
             if let first = coords.first {
                 session.pin = first
@@ -1645,6 +1580,25 @@ private struct RouteEndpointMarker: View {
         .overlay(Circle().stroke(.white, lineWidth: 2))
         .shadow(color: .black.opacity(0.35), radius: 2, y: 1)
         .accessibilityHidden(true)
+    }
+}
+
+private struct RouteWaypointMarker: View {
+    let number: Int
+
+    var body: some View {
+        ZStack {
+            Image(systemName: "mappin.circle.fill")
+                .font(.title.weight(.semibold))
+                .foregroundStyle(.blue)
+                .shadow(color: .black.opacity(0.35), radius: 2, y: 1)
+            Text("\(number)")
+                .font(.caption2.weight(.bold))
+                .foregroundStyle(.white)
+                .offset(y: -2)
+        }
+        .frame(width: 38, height: 44)
+        .accessibilityLabel("途经点 \(number)")
     }
 }
 

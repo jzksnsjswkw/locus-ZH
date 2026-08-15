@@ -84,9 +84,6 @@ final class SpoofSession: ObservableObject {
         didSet { UserDefaults.standard.set(targetSelectionMode.rawValue, forKey: "locus.targetSelectionMode") }
     }
     @Published var crosshairCoordinate: CLLocationCoordinate2D?
-    @Published var lookAroundEnabled = false {
-        didSet { UserDefaults.standard.set(lookAroundEnabled, forKey: "locus.lookAroundEnabled") }
-    }
     @Published var searchHistoryEnabled = true {
         didSet { UserDefaults.standard.set(searchHistoryEnabled, forKey: "locus.searchHistoryEnabled") }
     }
@@ -155,7 +152,6 @@ final class SpoofSession: ObservableObject {
         targetSelectionMode = TargetSelectionMode(
             rawValue: UserDefaults.standard.string(forKey: "locus.targetSelectionMode") ?? ""
         ) ?? .pin
-        lookAroundEnabled = UserDefaults.standard.bool(forKey: "locus.lookAroundEnabled")
         searchHistoryEnabled = UserDefaults.standard.object(forKey: "locus.searchHistoryEnabled") == nil
             ? true
             : UserDefaults.standard.bool(forKey: "locus.searchHistoryEnabled")
@@ -222,7 +218,6 @@ final class SpoofSession: ObservableObject {
                 routeLoopCount: routeLoopCount,
                 mapStyleIndex: mapStyleIndex,
                 targetSelectionMode: targetSelectionMode.rawValue,
-                lookAroundEnabled: lookAroundEnabled,
                 searchHistoryEnabled: searchHistoryEnabled,
                 autoFollowRoute: autoFollowRoute,
                 restoreLastMapView: restoreLastMapView,
@@ -254,7 +249,6 @@ final class SpoofSession: ObservableObject {
         routeLoopCount = min(99, max(2, backup.preferences.routeLoopCount))
         mapStyleIndex = min(1, max(0, backup.preferences.mapStyleIndex))
         targetSelectionMode = TargetSelectionMode(rawValue: backup.preferences.targetSelectionMode) ?? .pin
-        lookAroundEnabled = backup.preferences.lookAroundEnabled
         searchHistoryEnabled = backup.preferences.searchHistoryEnabled
         autoFollowRoute = backup.preferences.autoFollowRoute
         restoreLastMapView = backup.preferences.restoreLastMapView

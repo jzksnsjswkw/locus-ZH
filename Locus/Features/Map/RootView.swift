@@ -9,7 +9,9 @@ enum MapChromeLayout {
     static let spacing: CGFloat = 10
     static let primaryHeight: CGFloat = 56
     static let rightColumnWidth: CGFloat = 56
-    static let bottomPadding: CGFloat = 8
+    // Leave MapKit's system-owned attribution unobscured. Its position is not
+    // publicly configurable, so the app chrome must yield this space instead.
+    static let bottomPadding: CGFloat = 24
     static let rightRailClearance = bottomPadding + primaryHeight + spacing
 }
 
@@ -25,9 +27,10 @@ struct RootView: View {
     @State private var searchPresented = false
     @State private var showRouteSheet = false
     @State private var generatedRouteReady = false
+    @State private var routeOptions: [PlannedRoute] = []
+    @State private var selectedRouteOptionID: UUID?
     @State private var drawingRouteActive = false
     @State private var drawingRoutePointCount = 0
-    @State private var streetViewActive = false
 
     var body: some View {
         // Bottom chrome is a sibling overlay aligned to the bottom — no full-screen
@@ -39,13 +42,13 @@ struct RootView: View {
                 searchPresented: $searchPresented,
                 showRouteSheet: $showRouteSheet,
                 generatedRouteReady: $generatedRouteReady,
+                routeOptions: $routeOptions,
+                selectedRouteOptionID: $selectedRouteOptionID,
                 drawingRouteActive: $drawingRouteActive,
-                drawingRoutePointCount: $drawingRoutePointCount,
-                streetViewActive: $streetViewActive
+                drawingRoutePointCount: $drawingRoutePointCount
             )
 
-            if !streetViewActive {
-                VStack(spacing: 10) {
+            VStack(spacing: 10) {
                 if let favoriteRenameSuggestion, !searchPresented {
                     renameSuggestionButton(favoriteRenameSuggestion)
                         .frame(maxWidth: .infinity, alignment: .center)
@@ -63,6 +66,11 @@ struct RootView: View {
                                 generatedRouteControls
                                     .frame(maxWidth: .infinity, alignment: .center)
                                     .transition(.move(edge: .bottom).combined(with: .opacity))
+                                if routeOptions.count > 1 {
+                                    routeChoiceControls
+                                        .frame(maxWidth: .infinity, alignment: .center)
+                                        .transition(.move(edge: .bottom).combined(with: .opacity))
+                                }
                             }
 
                             BottomControlsView(
@@ -76,19 +84,20 @@ struct RootView: View {
                     }
                     .transition(.move(edge: .bottom).combined(with: .opacity))
                 }
-                }
-                .padding(.horizontal, MapChromeLayout.horizontalPadding)
-                .padding(.bottom, MapChromeLayout.bottomPadding)
-                .transition(.opacity.combined(with: .move(edge: .bottom)))
             }
+            .padding(.horizontal, MapChromeLayout.horizontalPadding)
+            .padding(.bottom, MapChromeLayout.bottomPadding)
+            .transition(.opacity.combined(with: .move(edge: .bottom)))
         }
         .sheet(isPresented: $showSettings) {
             SettingsView()
                 .presentationDetents([.medium, .large])
+                .presentationBackground(.regularMaterial)
         }
         .sheet(isPresented: $showPlaces) {
             PlacesView()
                 .presentationDetents([.medium, .large])
+                .presentationBackground(.regularMaterial)
         }
         .alert("Locus", isPresented: Binding(
             get: { session.lastError != nil },
@@ -132,7 +141,6 @@ struct RootView: View {
         .animation(.spring(response: 0.32, dampingFraction: 0.84), value: searchPresented)
         .animation(.spring(response: 0.32, dampingFraction: 0.84), value: generatedRouteReady)
         .animation(.spring(response: 0.32, dampingFraction: 0.84), value: drawingRouteActive)
-        .animation(.spring(response: 0.38, dampingFraction: 0.82), value: streetViewActive)
     }
 
     private var bottomSearchButton: some View {
@@ -219,6 +227,52 @@ struct RootView: View {
         .frame(width: 224, height: 50)
         .locusGlass(.regular, in: Capsule())
         .contentShape(Capsule())
+    }
+
+    private var routeChoiceControls: some View {
+        HStack(spacing: 6) {
+            ForEach(routeOptions) { option in
+                let index = routeOptions.firstIndex(where: { $0.id == option.id }) ?? 0
+                Button {
+                    dismissStatusDetails()
+                    selectedRouteOptionID = option.id
+                    UISelectionFeedbackGenerator().selectionChanged()
+                } label: {
+                    VStack(spacing: 1) {
+                        Text("路线 \(index + 1)")
+                            .font(.caption.weight(.bold))
+                        Text(routeOptionDetail(option))
+                            .font(.caption2.monospacedDigit())
+                            .lineLimit(1)
+                            .minimumScaleFactor(0.7)
+                    }
+                    .foregroundStyle(selectedRouteOptionID == option.id ? Color.white : Color.primary)
+                    .frame(maxWidth: .infinity)
+                    .frame(height: 40)
+                    .background(
+                        Capsule().fill(
+                            selectedRouteOptionID == option.id
+                                ? Color(red: 0.0, green: 0.42, blue: 0.24)
+                                : Color.primary.opacity(0.06)
+                        )
+                    )
+                    .contentShape(Capsule())
+                }
+                .buttonStyle(.plain)
+            }
+        }
+        .padding(4)
+        .frame(maxWidth: 320)
+        .locusGlass(.regular, in: Capsule())
+        .contentShape(Capsule())
+    }
+
+    private func routeOptionDetail(_ option: PlannedRoute) -> String {
+        let minutes = max(1, Int((option.expectedTravelTime / 60).rounded()))
+        let distance = option.distance >= 1_000
+            ? String(format: "%.1f km", option.distance / 1_000)
+            : "\(Int(option.distance.rounded())) m"
+        return "\(minutes) 分 · \(distance)"
     }
 
     private var drawingRouteControls: some View {
@@ -489,6 +543,15 @@ struct StatusBarView: View {
                 locationDetailValue("邮编", locationSummary.postalCode)
             }
 
+            HStack(spacing: 6) {
+                Label("地图数据源", systemImage: "map.fill")
+                Spacer(minLength: 8)
+                Text(mapDataSourceName)
+                    .fontWeight(.semibold)
+            }
+            .font(.caption2)
+            .foregroundStyle(.secondary)
+
             TimelineView(.periodic(from: .now, by: 60)) { context in
                 Label("当地时间：\(locationSummary.localTimeString(at: context.date))", systemImage: "clock")
                     .font(.caption2.monospacedDigit())
@@ -529,6 +592,7 @@ struct StatusBarView: View {
             "国家：\(locationSummary.country)",
             "城市：\(locationSummary.city)",
             "邮编：\(locationSummary.postalCode)",
+            "地图数据源：\(mapDataSourceName)",
             coordinate
         ]
         .filter { !$0.isEmpty }
@@ -541,6 +605,11 @@ struct StatusBarView: View {
 
     private func longitudeText(_ longitude: Double) -> String {
         String(format: "%.5f° %@", abs(longitude), longitude >= 0 ? "E" : "W")
+    }
+
+    private var mapDataSourceName: String {
+        guard let coordinate = locationSummaryCoordinate else { return "Apple" }
+        return ChinaCoordinateTransform.usesMainlandChinaOffset(coordinate) ? "高德" : "Apple"
     }
 
     private func refreshTunnel() {
@@ -894,47 +963,80 @@ struct BottomControlsView: View {
 
     private var showsCrosshairSessionControls: Bool {
         session.targetSelectionMode == .crosshair &&
-            session.isSpoofing &&
             !session.routeActive &&
             !session.routePaused
     }
 
+    @ViewBuilder
     private var crosshairSessionControls: some View {
-        HStack(spacing: 6) {
-            Button {
-                UIImpactFeedbackGenerator(style: .light).impactOccurred()
-                session.stop(pairing: pairing)
-            } label: {
-                Text("停止")
-                    .font(.subheadline.weight(.bold))
-                    .foregroundStyle(.white)
-                    .frame(maxWidth: .infinity)
-                    .frame(height: 48)
-                    .locusGlass(.interactive, tint: LocusTheme.danger, in: Capsule())
-            }
-            .buttonStyle(.plain)
-
-            Button {
-                guard let target = session.crosshairCoordinate else {
-                    session.lastError = "尚未取得准星位置，请先移动地图。"
-                    return
+        if session.isSpoofing {
+            HStack(spacing: 6) {
+                Button {
+                    UIImpactFeedbackGenerator(style: .light).impactOccurred()
+                    session.stop(pairing: pairing)
+                } label: {
+                    Text("停止")
+                        .font(.subheadline.weight(.bold))
+                        .foregroundStyle(.white)
+                        .frame(maxWidth: .infinity)
+                        .frame(height: 48)
+                        .locusGlass(.interactive, tint: LocusTheme.danger, in: Capsule())
                 }
-                UIImpactFeedbackGenerator(style: .light).impactOccurred()
-                session.teleport(to: target, pairing: pairing)
-            } label: {
-                Text("应用当前位置")
-                    .font(.subheadline.weight(.bold))
-                    .foregroundStyle(.black)
-                    .lineLimit(1)
-                    .minimumScaleFactor(0.75)
-                    .frame(maxWidth: .infinity)
-                    .frame(height: 48)
-                    .locusGlass(.interactive, tint: LocusTheme.accent, in: Capsule())
+                .buttonStyle(.plain)
+
+                Button {
+                    guard let target = session.crosshairCoordinate else {
+                        session.lastError = "尚未取得准星位置，请先移动地图。"
+                        return
+                    }
+                    UIImpactFeedbackGenerator(style: .light).impactOccurred()
+                    session.teleport(to: target, pairing: pairing)
+                } label: {
+                    Text("应用当前位置")
+                        .font(.subheadline.weight(.bold))
+                        .foregroundStyle(.black)
+                        .lineLimit(1)
+                        .minimumScaleFactor(0.75)
+                        .frame(maxWidth: .infinity)
+                        .frame(height: 48)
+                        .locusGlass(.interactive, tint: LocusTheme.accent, in: Capsule())
+                }
+                .buttonStyle(.plain)
+                .disabled(session.crosshairCoordinate == nil || session.isBusy)
             }
-            .buttonStyle(.plain)
-            .disabled(session.crosshairCoordinate == nil || session.isBusy)
+            .frame(maxWidth: .infinity)
+        } else {
+            HStack(spacing: 6) {
+                Button {
+                    UIImpactFeedbackGenerator(style: .light).impactOccurred()
+                    performSessionAction()
+                } label: {
+                    Text("开始定位")
+                        .font(.subheadline.weight(.bold))
+                        .foregroundStyle(.black)
+                        .frame(maxWidth: .infinity)
+                        .frame(height: 48)
+                        .locusGlass(.interactive, tint: LocusTheme.accent, in: Capsule())
+                }
+                .buttonStyle(.plain)
+                .disabled(session.crosshairCoordinate == nil || session.isBusy)
+
+                Button {
+                    UIImpactFeedbackGenerator(style: .light).impactOccurred()
+                    NotificationCenter.default.post(name: .locusBuildRouteToTarget, object: nil)
+                } label: {
+                    Text("生成轨迹")
+                        .font(.subheadline.weight(.bold))
+                        .foregroundStyle(.white)
+                        .frame(maxWidth: .infinity)
+                        .frame(height: 48)
+                        .locusGlass(.interactive, tint: Color.blue, in: Capsule())
+                }
+                .buttonStyle(.plain)
+                .disabled(session.crosshairCoordinate == nil || session.isBusy)
+            }
+            .frame(maxWidth: .infinity)
         }
-        .frame(maxWidth: .infinity)
     }
 
     private var pausedRouteControls: some View {

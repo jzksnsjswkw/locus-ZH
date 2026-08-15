@@ -127,6 +127,8 @@ struct SettingsView: View {
                     .listRowSeparator(.hidden)
                 }
             }
+            .scrollContentBackground(.hidden)
+            .background(Color.clear)
             .navigationTitle("设置")
             .toolbar {
                 ToolbarItem(placement: .confirmationAction) {
@@ -243,14 +245,13 @@ struct SettingsView: View {
                 }
             }
 
-            Toggle("街景", isOn: $session.lookAroundEnabled)
             Toggle("地图缩放滑条", isOn: $session.zoomSliderEnabled)
             Toggle("轨迹运行时自动跟随", isOn: $session.autoFollowRoute)
             Toggle("启动时恢复上次地图视角", isOn: $session.restoreLastMapView)
         } header: {
             Text("地图与交互")
         } footer: {
-            Text("街景仅在 Apple 提供 Look Around 的地区可用。地图缩放滑条默认关闭；开启后可直接上下拖动。")
+            Text("地图缩放滑条默认关闭；开启后可直接上下拖动。")
         }
     }
 
@@ -290,7 +291,7 @@ struct SettingsView: View {
 
     private var privacySection: some View {
         Section("隐私") {
-            Text("所有数据均在设备端处理。收藏与搜索历史保存在 UserDefaults 中；无分析统计、无需账户，也不会上传任何内容。街景开启后，MapKit 仅探测当前地图中心附近是否存在街景；进入街景模式后才显示场景内容。")
+            Text("所有数据均在设备端处理。收藏与搜索历史保存在 UserDefaults 中；无分析统计、无需账户，也不会上传任何内容。")
                 .font(.footnote)
                 .foregroundStyle(.secondary)
         }
@@ -357,6 +358,8 @@ struct PlacesView: View {
                 }
 
             }
+            .scrollContentBackground(.hidden)
+            .background(Color.clear)
             .navigationTitle("收藏夹")
             .task {
                 await session.backfillFavoriteCountries()

@@ -458,15 +458,10 @@ struct MapHomeView: View {
     }
 
     private var topChrome: some View {
-        ZStack(alignment: .topTrailing) {
-            StatusBarView()
-                .frame(maxWidth: .infinity, alignment: .topLeading)
-            if !searchPresented {
-                mapTopControls
-            }
-        }
-        .padding(.horizontal, 16)
-        .padding(.bottom, 2)
+        StatusBarView()
+            .frame(maxWidth: .infinity, alignment: .topLeading)
+            .padding(.horizontal, 16)
+            .padding(.bottom, 2)
     }
 
     private var edgeZoomStrip: some View {
@@ -576,46 +571,6 @@ struct MapHomeView: View {
         .frame(maxHeight: 300)
     }
 
-    private var mapTopControls: some View {
-        HStack(spacing: 0) {
-            topControlButton("square.3.layers.3d", label: "切换地图图层") {
-                dismissStatusDetails()
-                session.mapStyleIndex = (session.mapStyleIndex + 1) % 3
-            }
-
-            Divider()
-                .overlay(Color.white.opacity(0.22))
-                .frame(height: 32)
-
-            topControlButton("location.fill", label: "回到当前位置") {
-                dismissStatusDetails()
-                UISelectionFeedbackGenerator().selectionChanged()
-                searchFocused = false
-                goToCurrentLocation()
-            }
-        }
-        .padding(4)
-        .frame(height: MapChromeLayout.rightColumnWidth)
-        .locusGlass(.clear, in: Capsule())
-        .contentShape(Capsule())
-        .foregroundStyle(.primary)
-    }
-
-    private func topControlButton(
-        _ systemName: String,
-        label: String,
-        action: @escaping () -> Void
-    ) -> some View {
-        Button(action: action) {
-            Image(systemName: systemName)
-                .font(.body.weight(.semibold))
-                .frame(width: 48, height: 48)
-                .contentShape(Rectangle())
-        }
-        .buttonStyle(.plain)
-        .accessibilityLabel(label)
-    }
-
     private var rightLowerDynamicControl: some View {
         ZStack(alignment: .bottomTrailing) {
             if session.joystickActive {
@@ -633,7 +588,7 @@ struct MapHomeView: View {
         }
         .frame(
             width: 148,
-            height: session.joystickActive ? 148 : 112,
+            height: session.joystickActive ? 148 : MapChromeLayout.rightColumnWidth * 4,
             alignment: .bottomTrailing
         )
         .animation(.spring(response: 0.38, dampingFraction: 0.78), value: session.joystickActive)
@@ -665,6 +620,28 @@ struct MapHomeView: View {
                 showPlaces = true
             }
             .accessibilityLabel("打开收藏夹")
+
+            Divider()
+                .overlay(Color.white.opacity(0.22))
+                .frame(width: 32)
+
+            rightRailIconButton("square.3.layers.3d") {
+                dismissStatusDetails()
+                session.mapStyleIndex = (session.mapStyleIndex + 1) % 3
+            }
+            .accessibilityLabel("切换地图图层")
+
+            Divider()
+                .overlay(Color.white.opacity(0.22))
+                .frame(width: 32)
+
+            rightRailIconButton("location.fill") {
+                dismissStatusDetails()
+                UISelectionFeedbackGenerator().selectionChanged()
+                searchFocused = false
+                goToCurrentLocation()
+            }
+            .accessibilityLabel("回到当前位置")
         }
         .padding(4)
         .frame(width: MapChromeLayout.rightColumnWidth)

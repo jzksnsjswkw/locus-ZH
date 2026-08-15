@@ -127,6 +127,8 @@ struct SettingsView: View {
                     .listRowSeparator(.hidden)
                 }
             }
+            .scrollContentBackground(.hidden)
+            .background(Color.clear)
             .navigationTitle("设置")
             .toolbar {
                 ToolbarItem(placement: .confirmationAction) {
@@ -154,6 +156,7 @@ struct SettingsView: View {
                 PairOnDeviceView()
                     .environmentObject(pairing)
                     .presentationDetents([.medium, .large])
+                    .locusSheetPresentation()
             }
             .fullScreenCover(isPresented: $showNameEasterEgg) {
                 LocusEasterEggView()
@@ -356,6 +359,8 @@ struct PlacesView: View {
                 }
 
             }
+            .scrollContentBackground(.hidden)
+            .background(Color.clear)
             .navigationTitle("收藏夹")
             .task {
                 await session.backfillFavoriteCountries()

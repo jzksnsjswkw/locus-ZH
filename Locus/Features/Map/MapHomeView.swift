@@ -357,6 +357,7 @@ struct MapHomeView: View {
                 }
             )
             .presentationDetents([.medium, .large])
+            .locusSheetPresentation()
         }
         .alert("清空搜索历史", isPresented: $confirmClearSearchHistory) {
             Button("清空", role: .destructive) { session.clearSearchHistory() }

@@ -92,10 +92,12 @@ struct RootView: View {
         .sheet(isPresented: $showSettings) {
             SettingsView()
                 .presentationDetents([.medium, .large])
+                .locusSheetPresentation()
         }
         .sheet(isPresented: $showPlaces) {
             PlacesView()
                 .presentationDetents([.medium, .large])
+                .locusSheetPresentation()
         }
         .alert("Locus", isPresented: Binding(
             get: { session.lastError != nil },
@@ -871,8 +873,11 @@ private final class MapLocationSummary: ObservableObject {
 struct BottomControlsView: View {
     @EnvironmentObject private var session: SpoofSession
     @EnvironmentObject private var pairing: PairingStore
+    @Environment(\.scenePhase) private var scenePhase
     @Binding var showSettings: Bool
     @Binding var showRouteSheet: Bool
+
+    @State private var tunnelConnected = LocalDevVPN.isConnected
 
     private let trayShape = RoundedRectangle(cornerRadius: 30, style: .continuous)
 
@@ -940,6 +945,20 @@ struct BottomControlsView: View {
             NotificationCenter.default.post(name: .locusDismissStatusDetails, object: nil)
         })
         .animation(.easeOut(duration: 0.18), value: session.joystickActive)
+        .onAppear(perform: refreshTunnelConnection)
+        .onChange(of: scenePhase) { _, phase in
+            if phase == .active { refreshTunnelConnection() }
+        }
+        .onReceive(NotificationCenter.default.publisher(for: .NEVPNStatusDidChange)) { _ in
+            refreshTunnelConnection()
+        }
+        .task(id: scenePhase) {
+            guard scenePhase == .active else { return }
+            while !Task.isCancelled {
+                try? await Task.sleep(for: .seconds(2))
+                refreshTunnelConnection()
+            }
+        }
     }
 
     private var routeRuntimeOptions: some View {
@@ -1048,7 +1067,7 @@ struct BottomControlsView: View {
                     .minimumScaleFactor(0.8)
             }
             .font(.subheadline.weight(.bold))
-            .foregroundStyle(session.isSpoofing && !session.canResumeRoute ? .white : .black)
+            .foregroundStyle(sessionControlForegroundColor)
             .frame(maxWidth: .infinity)
             .frame(height: 48)
             .padding(.horizontal, 8)
@@ -1056,7 +1075,7 @@ struct BottomControlsView: View {
             .contentShape(Capsule())
         }
         .buttonStyle(.plain)
-        .disabled(!session.isSpoofing && session.isBusy)
+        .disabled(tunnelConnected && !session.isSpoofing && session.isBusy)
         .contextMenu {
             if session.canResumeRoute {
                 Button(role: .destructive) {
@@ -1121,13 +1140,13 @@ struct BottomControlsView: View {
                 } label: {
                     Text("开始定位")
                         .font(.subheadline.weight(.bold))
-                        .foregroundStyle(.black)
+                        .foregroundStyle(startControlForegroundColor)
                         .frame(maxWidth: .infinity)
                         .frame(height: 48)
-                        .locusGlass(.interactive, tint: LocusTheme.accent, in: Capsule())
+                        .locusGlass(.interactive, tint: startControlColor, in: Capsule())
                 }
                 .buttonStyle(.plain)
-                .disabled(session.crosshairCoordinate == nil || session.isBusy)
+                .disabled(tunnelConnected && (session.crosshairCoordinate == nil || session.isBusy))
 
                 Button {
                     UIImpactFeedbackGenerator(style: .light).impactOccurred()
@@ -1184,7 +1203,21 @@ struct BottomControlsView: View {
     }
 
     private var sessionControlColor: Color {
-        session.isSpoofing && !session.canResumeRoute ? LocusTheme.danger : LocusTheme.accent
+        if !tunnelConnected && !session.isSpoofing { return .gray }
+        return session.isSpoofing && !session.canResumeRoute ? LocusTheme.danger : LocusTheme.accent
+    }
+
+    private var sessionControlForegroundColor: Color {
+        if !tunnelConnected && !session.isSpoofing { return .white.opacity(0.82) }
+        return session.isSpoofing && !session.canResumeRoute ? .white : .black
+    }
+
+    private var startControlColor: Color {
+        tunnelConnected ? LocusTheme.accent : .gray
+    }
+
+    private var startControlForegroundColor: Color {
+        tunnelConnected ? .black : .white.opacity(0.82)
     }
 
     private func performSessionAction() {
@@ -1193,6 +1226,7 @@ struct BottomControlsView: View {
         } else if session.isSpoofing {
             session.stop(pairing: pairing)
         } else {
+            guard requireConnectedTunnel() else { return }
             guard let target = session.selectedTargetCoordinate else {
                 session.lastError = session.targetSelectionMode == .crosshair
                     ? "尚未取得准星位置，请先移动地图。"
@@ -1201,6 +1235,20 @@ struct BottomControlsView: View {
             }
             session.teleport(to: target, pairing: pairing)
         }
+    }
+
+    private func requireConnectedTunnel() -> Bool {
+        let connected = LocalDevVPN.isConnected
+        tunnelConnected = connected
+        guard connected else {
+            session.lastError = "请先连接LocalDevVPN"
+            return false
+        }
+        return true
+    }
+
+    private func refreshTunnelConnection() {
+        tunnelConnected = LocalDevVPN.isConnected
     }
 
     private func trayIcon(_ systemName: String, action: @escaping () -> Void) -> some View {

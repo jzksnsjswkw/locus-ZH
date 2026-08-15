@@ -16,6 +16,25 @@ enum LocusGlassStyle {
     case interactive
 }
 
+/// One stable, strongly blurred surface for every app-owned sheet.
+/// Keeping the same material while the detent moves avoids a visible
+/// background swap between the medium and full-height states.
+private struct LocusSheetBackdrop: View {
+    @Environment(\.colorScheme) private var colorScheme
+
+    var body: some View {
+        Rectangle()
+            .fill(.regularMaterial)
+            .overlay {
+                Rectangle()
+                    .fill(colorScheme == .dark
+                          ? Color.black.opacity(0.30)
+                          : Color.white.opacity(0.36))
+            }
+            .ignoresSafeArea()
+    }
+}
+
 /// Liquid Glass on iOS 26+; material fallback earlier.
 struct LocusGlassModifier<S: Shape>: ViewModifier {
     var style: LocusGlassStyle
@@ -64,5 +83,12 @@ extension View {
 
     func locusGlass(_ style: LocusGlassStyle = .regular, tint: Color? = nil) -> some View {
         locusGlass(style, tint: tint, in: RoundedRectangle(cornerRadius: 20, style: .continuous))
+    }
+
+    func locusSheetPresentation() -> some View {
+        background(Color.clear)
+            .presentationBackground {
+                LocusSheetBackdrop()
+            }
     }
 }

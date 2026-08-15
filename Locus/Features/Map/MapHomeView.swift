@@ -64,161 +64,7 @@ struct MapHomeView: View {
             // shifts convert() upward by ~status-bar height.
             MapReader { proxy in
                 Map(position: $position) {
-                    UserAnnotation()
-
-                    ForEach(session.favorites) { favorite in
-                        Annotation(
-                            "",
-                            coordinate: favorite.coordinate,
-                            anchor: UnitPoint(x: 0.5, y: 0.76)
-                        ) {
-                            FavoriteMapMarker(
-                                selected: selectedFavoriteID == favorite.id,
-                                onSelect: {
-                                    dismissStatusDetails()
-                                    selectedFavoriteID = favorite.id
-                                    pinSelected = false
-                                    pinExpandedActions = false
-                                    if session.targetSelectionMode != .crosshair {
-                                        selectFavorite(favorite)
-                                    } else {
-                                        UISelectionFeedbackGenerator().selectionChanged()
-                                    }
-                                },
-                                onLongPress: {
-                                    dismissStatusDetails()
-                                    pinSelected = false
-                                    pinExpandedActions = false
-                                    withAnimation(.spring(response: 0.28, dampingFraction: 0.8)) {
-                                        selectedFavoriteID = favorite.id
-                                    }
-                                },
-                                onRemove: {
-                                    removeFavoriteFromMap(favorite)
-                                }
-                            )
-                            .accessibilityLabel(session.favoriteDisplayName(favorite))
-                            .accessibilityHint(session.targetSelectionMode == .crosshair
-                                               ? "轻点显示删除按钮"
-                                               : "半秒内松手可切换模拟位置，按住半秒显示删除按钮")
-                        }
-                    }
-
-                    if session.targetSelectionMode == .pin,
-                       let pin = session.pin,
-                       session.favorite(at: pin) == nil {
-                        Annotation("", coordinate: pin, anchor: .bottom) {
-                            MapDropPin(
-                                selected: pinSelected,
-                                expandedActions: pinExpandedActions,
-                                isDragging: isDraggingPin,
-                                onSelect: {
-                                    dismissStatusDetails()
-                                    searchFocused = false
-                                    suppressNextMapTap = true
-                                    selectedFavoriteID = nil
-                                    withAnimation(.spring(response: 0.28, dampingFraction: 0.78)) {
-                                        pinSelected = false
-                                        pinExpandedActions = false
-                                    }
-                                    DispatchQueue.main.asyncAfter(deadline: .now() + 0.05) {
-                                        suppressNextMapTap = false
-                                    }
-                                },
-                                onShowExpandedActions: {
-                                    dismissStatusDetails()
-                                    searchFocused = false
-                                    suppressNextMapTap = true
-                                    selectedFavoriteID = nil
-                                    withAnimation(.spring(response: 0.28, dampingFraction: 0.78)) {
-                                        pinSelected = true
-                                        pinExpandedActions = true
-                                    }
-                                    DispatchQueue.main.asyncAfter(deadline: .now() + 0.08) {
-                                        suppressNextMapTap = false
-                                    }
-                                },
-                                onRemove: {
-                                    dismissStatusDetails()
-                                    suppressNextMapTap = true
-                                    withAnimation {
-                                        session.pin = nil
-                                        pinSelected = false
-                                        pinExpandedActions = false
-                                    }
-                                    DispatchQueue.main.asyncAfter(deadline: .now() + 0.05) {
-                                        suppressNextMapTap = false
-                                    }
-                                },
-                                onBuildRouteToPin: buildRouteToCurrentTarget,
-                                onDragBegan: {
-                                    dismissStatusDetails()
-                                    searchFocused = false
-                                    suppressNextMapTap = true
-                                    pinPlaceName = nil
-                                    pinSelected = false
-                                    pinExpandedActions = false
-                                    isDraggingPin = true
-                                },
-                                onDragMoved: { globalPoint in
-                                    if let coord = proxy.convert(globalPoint, from: .global) {
-                                        session.pin = coord
-                                    }
-                                },
-                                onDragEnded: {
-                                    isDraggingPin = false
-                                    DispatchQueue.main.asyncAfter(deadline: .now() + 0.15) {
-                                        suppressNextMapTap = false
-                                    }
-                                }
-                            )
-                        }
-                    }
-                    if let sim = session.simulated {
-                        Annotation("模拟位置", coordinate: sim) {
-                            ZStack {
-                                Circle().fill(LocusTheme.accent.opacity(0.25)).frame(width: 44, height: 44)
-                                Circle().fill(LocusTheme.accent).frame(width: 14, height: 14)
-                                    .overlay(Circle().stroke(.white, lineWidth: 2))
-                            }
-                        }
-                    }
-                    ForEach(routeWaypoints.indices, id: \.self) { index in
-                        Annotation("途经点 \(index + 1)", coordinate: routeWaypoints[index], anchor: .bottom) {
-                            RouteWaypointMarker(number: index + 1)
-                        }
-                    }
-                    if session.mapStyleIndex == 0 {
-                        if routeOptions.isEmpty {
-                            if routeCoords.count > 1 {
-                                MapPolyline(coordinates: routeCoords)
-                                    .stroke(presentedRouteColor, style: presentedRouteStrokeStyle)
-                            }
-                        } else {
-                            ForEach(routeOptions.filter { $0.id != selectedRouteOptionID }) { option in
-                                MapPolyline(coordinates: option.coordinates)
-                                    .stroke(unselectedRouteColor, lineWidth: 4)
-                            }
-                            if let selectedPlannedRoute {
-                                MapPolyline(coordinates: selectedPlannedRoute.coordinates)
-                                    .stroke(selectedRouteColor, lineWidth: 6)
-                            }
-                        }
-                    }
-                    if drawnPath.count > 1, session.mapStyleIndex == 0 {
-                        MapPolyline(coordinates: drawnPath)
-                            .stroke(LocusTheme.accentSecondary, style: StrokeStyle(lineWidth: 4, dash: [6, 4]))
-                    }
-                    if let start = drawMode ? drawnPath.first : drawnRouteStart {
-                        Annotation("手绘轨迹起点", coordinate: start) {
-                            RouteEndpointMarker(color: .green, systemImage: "play.fill")
-                        }
-                    }
-                    if !drawMode, let end = drawnRouteEnd {
-                        Annotation("手绘轨迹终点", coordinate: end) {
-                            RouteEndpointMarker(color: .red, systemImage: "stop.fill")
-                        }
-                    }
+                    mapContent(proxy: proxy)
                 }
                 .mapStyle(mapStyle)
                 .mapControlVisibility(.hidden)
@@ -482,6 +328,183 @@ struct MapHomeView: View {
             Button("取消", role: .cancel) {}
         } message: {
             Text("此操作无法撤销。")
+        }
+    }
+
+    @MapContentBuilder
+    private func mapContent(proxy: MapProxy) -> some MapContent {
+        UserAnnotation()
+        favoriteAnnotations
+        pinAnnotation(proxy: proxy)
+
+        if let sim = session.simulated {
+            Annotation("模拟位置", coordinate: sim) {
+                ZStack {
+                    Circle().fill(LocusTheme.accent.opacity(0.25)).frame(width: 44, height: 44)
+                    Circle().fill(LocusTheme.accent).frame(width: 14, height: 14)
+                        .overlay(Circle().stroke(.white, lineWidth: 2))
+                }
+            }
+        }
+
+        ForEach(routeWaypoints.indices, id: \.self) { index in
+            Annotation("途经点 \(index + 1)", coordinate: routeWaypoints[index], anchor: .bottom) {
+                RouteWaypointMarker(number: index + 1)
+            }
+        }
+
+        routeLineContent
+
+        if let start = drawMode ? drawnPath.first : drawnRouteStart {
+            Annotation("手绘轨迹起点", coordinate: start) {
+                RouteEndpointMarker(color: .green, systemImage: "play.fill")
+            }
+        }
+        if !drawMode, let end = drawnRouteEnd {
+            Annotation("手绘轨迹终点", coordinate: end) {
+                RouteEndpointMarker(color: .red, systemImage: "stop.fill")
+            }
+        }
+    }
+
+    @MapContentBuilder
+    private var favoriteAnnotations: some MapContent {
+        ForEach(session.favorites) { favorite in
+            Annotation(
+                "",
+                coordinate: favorite.coordinate,
+                anchor: UnitPoint(x: 0.5, y: 0.76)
+            ) {
+                FavoriteMapMarker(
+                    selected: selectedFavoriteID == favorite.id,
+                    onSelect: {
+                        dismissStatusDetails()
+                        selectedFavoriteID = favorite.id
+                        pinSelected = false
+                        pinExpandedActions = false
+                        if session.targetSelectionMode != .crosshair {
+                            selectFavorite(favorite)
+                        } else {
+                            UISelectionFeedbackGenerator().selectionChanged()
+                        }
+                    },
+                    onLongPress: {
+                        dismissStatusDetails()
+                        pinSelected = false
+                        pinExpandedActions = false
+                        withAnimation(.spring(response: 0.28, dampingFraction: 0.8)) {
+                            selectedFavoriteID = favorite.id
+                        }
+                    },
+                    onRemove: {
+                        removeFavoriteFromMap(favorite)
+                    }
+                )
+                .accessibilityLabel(session.favoriteDisplayName(favorite))
+                .accessibilityHint(session.targetSelectionMode == .crosshair
+                                   ? "轻点显示删除按钮"
+                                   : "半秒内松手可切换模拟位置，按住半秒显示删除按钮")
+            }
+        }
+    }
+
+    @MapContentBuilder
+    private func pinAnnotation(proxy: MapProxy) -> some MapContent {
+        if session.targetSelectionMode == .pin,
+           let pin = session.pin,
+           session.favorite(at: pin) == nil {
+            Annotation("", coordinate: pin, anchor: .bottom) {
+                MapDropPin(
+                    selected: pinSelected,
+                    expandedActions: pinExpandedActions,
+                    isDragging: isDraggingPin,
+                    onSelect: {
+                        dismissStatusDetails()
+                        searchFocused = false
+                        suppressNextMapTap = true
+                        selectedFavoriteID = nil
+                        withAnimation(.spring(response: 0.28, dampingFraction: 0.78)) {
+                            pinSelected = false
+                            pinExpandedActions = false
+                        }
+                        DispatchQueue.main.asyncAfter(deadline: .now() + 0.05) {
+                            suppressNextMapTap = false
+                        }
+                    },
+                    onShowExpandedActions: {
+                        dismissStatusDetails()
+                        searchFocused = false
+                        suppressNextMapTap = true
+                        selectedFavoriteID = nil
+                        withAnimation(.spring(response: 0.28, dampingFraction: 0.78)) {
+                            pinSelected = true
+                            pinExpandedActions = true
+                        }
+                        DispatchQueue.main.asyncAfter(deadline: .now() + 0.08) {
+                            suppressNextMapTap = false
+                        }
+                    },
+                    onRemove: {
+                        dismissStatusDetails()
+                        suppressNextMapTap = true
+                        withAnimation {
+                            session.pin = nil
+                            pinSelected = false
+                            pinExpandedActions = false
+                        }
+                        DispatchQueue.main.asyncAfter(deadline: .now() + 0.05) {
+                            suppressNextMapTap = false
+                        }
+                    },
+                    onBuildRouteToPin: buildRouteToCurrentTarget,
+                    onDragBegan: {
+                        dismissStatusDetails()
+                        searchFocused = false
+                        suppressNextMapTap = true
+                        pinPlaceName = nil
+                        pinSelected = false
+                        pinExpandedActions = false
+                        isDraggingPin = true
+                    },
+                    onDragMoved: { globalPoint in
+                        if let coord = proxy.convert(globalPoint, from: .global) {
+                            session.pin = coord
+                        }
+                    },
+                    onDragEnded: {
+                        isDraggingPin = false
+                        DispatchQueue.main.asyncAfter(deadline: .now() + 0.15) {
+                            suppressNextMapTap = false
+                        }
+                    }
+                )
+            }
+        }
+    }
+
+    @MapContentBuilder
+    private var routeLineContent: some MapContent {
+        if session.mapStyleIndex == 0 {
+            if routeOptions.isEmpty {
+                if routeCoords.count > 1 {
+                    MapPolyline(coordinates: routeCoords)
+                        .stroke(presentedRouteColor, style: presentedRouteStrokeStyle)
+                }
+            } else {
+                ForEach(routeOptions.filter { $0.id != selectedRouteOptionID }) { option in
+                    MapPolyline(coordinates: option.coordinates)
+                        .stroke(unselectedRouteColor, lineWidth: 4)
+                }
+                if let selectedPlannedRoute {
+                    MapPolyline(coordinates: selectedPlannedRoute.coordinates)
+                        .stroke(selectedRouteColor, lineWidth: 6)
+                }
+            }
+        }
+
+        if drawnPath.count > 1, session.mapStyleIndex == 0 {
+            MapPolyline(coordinates: drawnPath)
+                .stroke(LocusTheme.accentSecondary, style: StrokeStyle(lineWidth: 4, dash: [6, 4]))
         }
     }
 

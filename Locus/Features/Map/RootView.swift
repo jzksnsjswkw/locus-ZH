@@ -760,7 +760,11 @@ struct BottomControlsView: View {
             .foregroundStyle(selected ? .black : .primary)
             .frame(maxWidth: .infinity)
             .frame(height: 40)
-            .background(Capsule().fill(selected ? LocusTheme.accent : Color.primary.opacity(0.08)))
+            .locusGlass(
+                .interactive,
+                tint: selected ? LocusTheme.accent : nil,
+                in: Capsule()
+            )
             .contentShape(Capsule())
         }
         .buttonStyle(.plain)

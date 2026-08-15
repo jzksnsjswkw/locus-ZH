@@ -31,8 +31,10 @@ struct MapHomeView: View {
     @State private var lookAroundScene: MKLookAroundScene?
     @State private var lookAroundCoordinate: CLLocationCoordinate2D?
     @State private var lookAroundAvailable = false
+    @State private var lookAroundAvailabilityRequest: MKLookAroundSceneRequest?
+    @State private var lookAroundAvailabilityTask: Task<Void, Never>?
     @State private var lookAroundRequest: MKLookAroundSceneRequest?
-    @State private var lookAroundProbeTask: Task<Void, Never>?
+    @State private var lookAroundUpdateTask: Task<Void, Never>?
     @State private var isRouting = false
     @State private var showGPXImporter = false
     @State private var drawnPath: [CLLocationCoordinate2D] = []
@@ -228,7 +230,7 @@ struct MapHomeView: View {
                         }
                     }
                     if !streetViewActive {
-                        scheduleLookAroundProbe(for: context.region)
+                        scheduleLookAroundAvailabilityCheck(for: context.region)
                     }
                 }
                 .onTapGesture { point in
@@ -329,7 +331,6 @@ struct MapHomeView: View {
             }
 
             if streetViewActive,
-               let scene = lookAroundScene,
                let coordinate = lookAroundCoordinate {
                 StreetViewMode(
                     scene: $lookAroundScene,
@@ -371,8 +372,12 @@ struct MapHomeView: View {
             favoriteToastTask?.cancel()
             favoriteToastTask = nil
             favoriteToast = nil
-            lookAroundProbeTask?.cancel()
-            lookAroundProbeTask = nil
+            lookAroundUpdateTask?.cancel()
+            lookAroundUpdateTask = nil
+            lookAroundAvailabilityTask?.cancel()
+            lookAroundAvailabilityTask = nil
+            lookAroundAvailabilityRequest?.cancel()
+            lookAroundAvailabilityRequest = nil
             lookAroundRequest?.cancel()
             lookAroundRequest = nil
             streetViewActive = false
@@ -420,11 +425,9 @@ struct MapHomeView: View {
             }
         }
         .onChange(of: session.lookAroundEnabled) { _, enabled in
-            if enabled {
-                if let visibleRegion {
-                    scheduleLookAroundProbe(for: visibleRegion, immediately: true)
-                }
-            } else {
+            if enabled, let visibleRegion {
+                scheduleLookAroundAvailabilityCheck(for: visibleRegion, immediately: true)
+            } else if !enabled {
                 clearLookAroundState()
             }
         }
@@ -774,7 +777,7 @@ struct MapHomeView: View {
                             )
                             .transition(.move(edge: .bottom).combined(with: .opacity))
                     }
-                    if lookAroundAvailable, lookAroundScene != nil {
+                    if streetViewEntryVisible {
                         Button(action: openStreetView) {
                             Image(systemName: "binoculars.fill")
                                 .font(.body.weight(.semibold))
@@ -973,44 +976,60 @@ struct MapHomeView: View {
         }
     }
 
-    private func scheduleLookAroundProbe(
+    private var streetViewEntryVisible: Bool {
+        guard session.lookAroundEnabled, let visibleRegion else { return false }
+        return lookAroundAvailable &&
+            visibleRegion.span.latitudeDelta <= 0.02 &&
+            visibleRegion.span.longitudeDelta <= 0.02
+    }
+
+    private func scheduleLookAroundAvailabilityCheck(
         for region: MKCoordinateRegion,
         immediately: Bool = false
     ) {
-        lookAroundProbeTask?.cancel()
-        lookAroundProbeTask = nil
+        lookAroundAvailabilityTask?.cancel()
+        lookAroundAvailabilityTask = nil
+        lookAroundAvailabilityRequest?.cancel()
+        lookAroundAvailabilityRequest = nil
+        lookAroundAvailable = false
+
         guard session.lookAroundEnabled,
               region.span.latitudeDelta <= 0.02,
-              region.span.longitudeDelta <= 0.02 else {
-            lookAroundRequest?.cancel()
-            lookAroundRequest = nil
-            lookAroundAvailable = false
-            lookAroundScene = nil
-            lookAroundCoordinate = nil
-            return
-        }
+              region.span.longitudeDelta <= 0.02 else { return }
 
-        lookAroundProbeTask = Task { @MainActor in
+        lookAroundAvailabilityTask = Task { @MainActor in
             if !immediately {
                 try? await Task.sleep(for: .milliseconds(450))
             }
-            guard !Task.isCancelled else { return }
-            loadLookAroundScene(at: region.center, preserveCurrentSceneOnFailure: false)
+            guard !Task.isCancelled, !streetViewActive else { return }
+            let request = MKLookAroundSceneRequest(
+                coordinate: ChinaCoordinateTransform.mapCoordinateToSystemCoordinate(region.center)
+            )
+            lookAroundAvailabilityRequest = request
+            request.getSceneWithCompletionHandler { scene, _ in
+                DispatchQueue.main.async {
+                    guard self.lookAroundAvailabilityRequest === request,
+                          !self.streetViewActive else { return }
+                    self.lookAroundAvailabilityRequest = nil
+                    self.lookAroundAvailable = scene != nil
+                }
+            }
         }
     }
 
     private func requestStreetViewScene(at coordinate: CLLocationCoordinate2D) {
-        lookAroundProbeTask?.cancel()
-        lookAroundProbeTask = Task { @MainActor in
+        guard streetViewActive else { return }
+        lookAroundUpdateTask?.cancel()
+        lookAroundUpdateTask = Task { @MainActor in
             try? await Task.sleep(for: .milliseconds(350))
             guard !Task.isCancelled else { return }
-            loadLookAroundScene(at: coordinate, preserveCurrentSceneOnFailure: true)
+            loadLookAroundScene(at: coordinate, exitStreetViewOnFailure: false)
         }
     }
 
     private func loadLookAroundScene(
         at mapCoordinate: CLLocationCoordinate2D,
-        preserveCurrentSceneOnFailure: Bool
+        exitStreetViewOnFailure: Bool
     ) {
         lookAroundRequest?.cancel()
         let request = MKLookAroundSceneRequest(
@@ -1022,43 +1041,62 @@ struct MapHomeView: View {
                 guard self.lookAroundRequest === request else { return }
                 self.lookAroundRequest = nil
                 guard let scene else {
-                    if !preserveCurrentSceneOnFailure {
-                        self.lookAroundAvailable = false
+                    if exitStreetViewOnFailure {
+                        self.streetViewActive = false
                         self.lookAroundScene = nil
                         self.lookAroundCoordinate = nil
+                        self.session.lastError = "此位置暂无 Apple 街景。"
                     }
                     return
                 }
                 self.lookAroundScene = scene
                 self.lookAroundCoordinate = mapCoordinate
-                self.lookAroundAvailable = true
             }
         }
     }
 
     private func openStreetView() {
-        guard lookAroundScene != nil, lookAroundCoordinate != nil else { return }
+        guard session.lookAroundEnabled,
+              lookAroundAvailable,
+              let coordinate = visibleRegion?.center else { return }
+        lookAroundAvailabilityTask?.cancel()
+        lookAroundAvailabilityTask = nil
+        lookAroundAvailabilityRequest?.cancel()
+        lookAroundAvailabilityRequest = nil
         dismissStatusDetails()
         searchPresented = false
+        lookAroundScene = nil
+        lookAroundCoordinate = coordinate
         UIImpactFeedbackGenerator(style: .light).impactOccurred()
         withAnimation(.spring(response: 0.42, dampingFraction: 0.84)) {
             streetViewActive = true
         }
+        loadLookAroundScene(at: coordinate, exitStreetViewOnFailure: true)
     }
 
     private func closeStreetView() {
+        lookAroundUpdateTask?.cancel()
+        lookAroundUpdateTask = nil
+        lookAroundRequest?.cancel()
+        lookAroundRequest = nil
         UISelectionFeedbackGenerator().selectionChanged()
         withAnimation(.spring(response: 0.38, dampingFraction: 0.86)) {
             streetViewActive = false
         }
+        lookAroundScene = nil
+        lookAroundCoordinate = nil
         if let visibleRegion {
-            scheduleLookAroundProbe(for: visibleRegion, immediately: true)
+            scheduleLookAroundAvailabilityCheck(for: visibleRegion, immediately: true)
         }
     }
 
     private func clearLookAroundState() {
-        lookAroundProbeTask?.cancel()
-        lookAroundProbeTask = nil
+        lookAroundAvailabilityTask?.cancel()
+        lookAroundAvailabilityTask = nil
+        lookAroundAvailabilityRequest?.cancel()
+        lookAroundAvailabilityRequest = nil
+        lookAroundUpdateTask?.cancel()
+        lookAroundUpdateTask = nil
         lookAroundRequest?.cancel()
         lookAroundRequest = nil
         lookAroundScene = nil
@@ -1263,33 +1301,6 @@ struct MapHomeView: View {
                     )
                 }
             }
-        }
-    }
-
-    private func handleLocationButtonTap() {
-        let now = Date()
-        if let lastLocationButtonTap,
-           now.timeIntervalSince(lastLocationButtonTap) <= 2 {
-            faceMapNorth()
-            self.lastLocationButtonTap = nil
-        } else {
-            goToCurrentLocation()
-            lastLocationButtonTap = now
-        }
-    }
-
-    private func faceMapNorth() {
-        guard let camera = visibleCamera else {
-            goToCurrentLocation()
-            return
-        }
-        withAnimation(.easeInOut(duration: 0.3)) {
-            position = .camera(MapCamera(
-                centerCoordinate: camera.centerCoordinate,
-                distance: camera.distance,
-                heading: 0,
-                pitch: camera.pitch
-            ))
         }
     }
 

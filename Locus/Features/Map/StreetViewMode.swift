@@ -40,13 +40,27 @@ struct StreetViewMode: View {
         GeometryReader { geometry in
             VStack(spacing: 0) {
                 ZStack(alignment: .topTrailing) {
-                    LookAroundPreview(
-                        scene: $scene,
-                        allowsNavigation: true,
-                        showsRoadLabels: true,
-                        pointsOfInterest: .all,
-                        badgePosition: .bottomTrailing
-                    )
+                    Group {
+                        if scene != nil {
+                            LookAroundPreview(
+                                scene: $scene,
+                                allowsNavigation: true,
+                                showsRoadLabels: true,
+                                pointsOfInterest: .all,
+                                badgePosition: .bottomTrailing
+                            )
+                        } else {
+                            ZStack {
+                                Color(uiColor: .secondarySystemBackground)
+                                VStack(spacing: 10) {
+                                    ProgressView()
+                                    Text("正在加载街景…")
+                                        .font(.subheadline.weight(.medium))
+                                        .foregroundStyle(.secondary)
+                                }
+                            }
+                        }
+                    }
                     .matchedGeometryEffect(id: "streetPreview", in: namespace)
 
                     HStack(spacing: 8) {
@@ -56,6 +70,7 @@ struct StreetViewMode: View {
                             Image(systemName: "arrow.up.left.and.arrow.down.right")
                                 .frame(width: 42, height: 42)
                         }
+                        .disabled(scene == nil)
                         .accessibilityLabel("全屏查看街景")
 
                         Button("完成", action: onDone)

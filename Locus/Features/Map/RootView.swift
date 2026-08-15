@@ -1,13 +1,12 @@
 import SwiftUI
 import NetworkExtension
 import CoreLocation
-import Contacts
 import UIKit
 
 enum MapChromeLayout {
     static let horizontalPadding: CGFloat = 16
     static let spacing: CGFloat = 10
-    static let primaryHeight: CGFloat = 80
+    static let primaryHeight: CGFloat = 56
     static let rightColumnWidth: CGFloat = 56
     static let bottomPadding: CGFloat = 8
     static let rightRailClearance = bottomPadding + primaryHeight + spacing
@@ -47,15 +46,23 @@ struct RootView: View {
 
                 if !searchPresented {
                     if generatedRouteReady {
-                        generatedRouteControls
-                            .frame(maxWidth: .infinity, alignment: .center)
-                            .transition(.move(edge: .bottom).combined(with: .opacity))
+                        HStack(spacing: MapChromeLayout.spacing) {
+                            generatedRouteControls
+                                .frame(maxWidth: .infinity, alignment: .center)
+                            Color.clear
+                                .frame(width: MapChromeLayout.rightColumnWidth)
+                        }
+                        .transition(.move(edge: .bottom).combined(with: .opacity))
                     }
 
-                    BottomControlsView(
-                        showSettings: $showSettings,
-                        showRouteSheet: $showRouteSheet
-                    )
+                    HStack(alignment: .bottom, spacing: MapChromeLayout.spacing) {
+                        BottomControlsView(
+                            showSettings: $showSettings,
+                            showRouteSheet: $showRouteSheet
+                        )
+
+                        bottomSearchButton
+                    }
                     .transition(.move(edge: .bottom).combined(with: .opacity))
                 }
             }
@@ -113,8 +120,38 @@ struct RootView: View {
         .animation(.spring(response: 0.32, dampingFraction: 0.84), value: generatedRouteReady)
     }
 
+    private var bottomSearchButton: some View {
+        Button {
+            dismissStatusDetails()
+            UISelectionFeedbackGenerator().selectionChanged()
+            searchPresented = true
+        } label: {
+            Image(systemName: "magnifyingglass")
+                .font(.title3.weight(.semibold))
+                .frame(
+                    width: MapChromeLayout.rightColumnWidth,
+                    height: MapChromeLayout.rightColumnWidth
+                )
+                .aspectRatio(1, contentMode: .fit)
+                .contentShape(Circle())
+        }
+        .buttonStyle(.plain)
+        .locusGlass(.interactive, in: Circle())
+        .frame(
+            width: MapChromeLayout.rightColumnWidth,
+            height: MapChromeLayout.rightColumnWidth
+        )
+        .clipShape(Circle())
+        .accessibilityLabel("搜索地点")
+    }
+
+    private func dismissStatusDetails() {
+        NotificationCenter.default.post(name: .locusDismissStatusDetails, object: nil)
+    }
+
     private func renameSuggestionButton(_ favorite: SavedPlace) -> some View {
         Button {
+            dismissStatusDetails()
             favoriteRenameTask?.cancel()
             let current = session.favorites.first(where: { $0.id == favorite.id }) ?? favorite
             favoriteRenameText = session.favoriteDisplayName(current)
@@ -138,6 +175,7 @@ struct RootView: View {
     private var generatedRouteControls: some View {
         HStack(spacing: 0) {
             Button {
+                dismissStatusDetails()
                 NotificationCenter.default.post(name: .locusDeleteRoute, object: nil)
             } label: {
                 Label("删除", systemImage: "trash.fill")
@@ -151,6 +189,7 @@ struct RootView: View {
                 .frame(height: 28)
 
             Button {
+                dismissStatusDetails()
                 NotificationCenter.default.post(name: .locusRunRoute, object: nil)
             } label: {
                 Label("运行", systemImage: "play.fill")
@@ -290,6 +329,12 @@ struct StatusBarView: View {
         .onReceive(NotificationCenter.default.publisher(for: .NEVPNStatusDidChange)) { _ in
             // LocalDevVPN connection changes show up here even though we don’t own the VPN.
             refreshTunnel()
+        }
+        .onReceive(NotificationCenter.default.publisher(for: .locusDismissStatusDetails)) { _ in
+            guard showLocationDetails else { return }
+            withAnimation(.easeOut(duration: 0.18)) {
+                showLocationDetails = false
+            }
         }
         .task(id: scenePhase) {
             guard scenePhase == .active else { return }
@@ -487,28 +532,40 @@ private final class MapLocationSummary: ObservableObject {
             do {
                 let placemark = try await self.geocoder.reverseGeocodeLocation(
                     location,
-                    preferredLocale: Locale(identifier: "zh_Hans_CN")
+                    preferredLocale: Locale(identifier: "en_GB")
                 ).first
                 guard !Task.isCancelled else { return }
-                self.country = self.nonEmpty(placemark?.country) ?? "未知国家"
-                self.city = self.nonEmpty(placemark?.locality ?? placemark?.administrativeArea) ?? "未知城市"
+                let countryCode = placemark?.isoCountryCode
+                self.country = countryCode.flatMap {
+                    Locale(identifier: "zh_Hans_CN").localizedString(forRegionCode: $0)
+                } ?? "未知国家"
+                self.city = self.englishText(
+                    placemark?.locality ?? placemark?.subAdministrativeArea ?? placemark?.administrativeArea
+                ) ?? "未知城市"
                 self.postalCode = self.nonEmpty(placemark?.postalCode) ?? "—"
-                if let postalAddress = placemark?.postalAddress {
-                    self.formattedAddress = CNPostalAddressFormatter
-                        .string(from: postalAddress, style: .mailingAddress)
-                        .split(whereSeparator: \.isNewline)
-                        .joined(separator: "，")
-                } else {
-                    self.formattedAddress = [
-                        placemark?.name,
-                        placemark?.subLocality,
-                        placemark?.locality,
-                        placemark?.administrativeArea,
-                        placemark?.country
-                    ]
-                    .compactMap { $0?.trimmingCharacters(in: .whitespacesAndNewlines) }
-                    .filter { !$0.isEmpty }
-                    .joined(separator: "，")
+                let street = [placemark?.subThoroughfare, placemark?.thoroughfare]
+                    .compactMap(self.englishText)
+                    .joined(separator: " ")
+                let englishCountry = countryCode.flatMap {
+                    Locale(identifier: "en_GB").localizedString(forRegionCode: $0)
+                } ?? self.englishText(placemark?.country)
+                self.formattedAddress = [
+                    street.isEmpty ? self.englishText(placemark?.name) : street,
+                    self.englishText(placemark?.subLocality),
+                    self.englishText(placemark?.locality),
+                    self.englishText(placemark?.subAdministrativeArea),
+                    self.englishText(placemark?.administrativeArea),
+                    self.nonEmpty(placemark?.postalCode),
+                    englishCountry
+                ]
+                .compactMap { $0 }
+                .reduce(into: [String]()) { result, value in
+                    guard !result.contains(where: { $0.caseInsensitiveCompare(value) == .orderedSame }) else { return }
+                    result.append(value)
+                }
+                .joined(separator: ", ")
+                if self.formattedAddress.isEmpty {
+                    self.formattedAddress = "Address unavailable"
                 }
             } catch {
                 guard !Task.isCancelled, self.country == "正在获取" else { return }
@@ -524,6 +581,11 @@ private final class MapLocationSummary: ObservableObject {
         guard let trimmed = value?.trimmingCharacters(in: .whitespacesAndNewlines),
               !trimmed.isEmpty else { return nil }
         return trimmed
+    }
+
+    private func englishText(_ value: String?) -> String? {
+        guard let value = nonEmpty(value) else { return nil }
+        return value.applyingTransform(.toLatin, reverse: false) ?? value
     }
 }
 
@@ -575,11 +637,8 @@ struct BottomControlsView: View {
 
                 HStack(spacing: 0) {
                     trayIcon("slider.horizontal.3") { showSettings = true }
-                    controlDivider
                     routeButton
-                    controlDivider
                     joystickButton
-                    controlDivider
                     if session.canResumeRoute {
                         pausedRouteControls
                     } else {
@@ -587,11 +646,14 @@ struct BottomControlsView: View {
                     }
                 }
         }
-        .padding(10)
+        .padding(4)
         .locusGlass(.regular, in: trayShape)
         .contentShape(trayShape)
         .frame(maxWidth: .infinity, alignment: .trailing)
         .frame(minHeight: MapChromeLayout.primaryHeight)
+        .simultaneousGesture(TapGesture().onEnded {
+            NotificationCenter.default.post(name: .locusDismissStatusDetails, object: nil)
+        })
         .animation(.easeOut(duration: 0.18), value: session.joystickActive)
     }
 
@@ -600,9 +662,9 @@ struct BottomControlsView: View {
             showRouteSheet = true
         } label: {
             Image(systemName: "point.topleft.down.to.point.bottomright.curvepath")
-                .font(.title2.weight(.semibold))
+                .font(.body.weight(.semibold))
                 .foregroundStyle(.primary)
-                .frame(width: 60, height: 60)
+                .frame(width: 48, height: 48)
                 .contentShape(Circle())
         }
         .buttonStyle(.plain)
@@ -618,9 +680,9 @@ struct BottomControlsView: View {
             }
         } label: {
             Image(systemName: "circle.grid.cross.fill")
-                .font(.title2.weight(.semibold))
+                .font(.body.weight(.semibold))
                 .foregroundStyle(session.joystickActive ? LocusTheme.accentSecondary : .primary)
-                .frame(width: 60, height: 60)
+                .frame(width: 48, height: 48)
                 .contentShape(Circle())
         }
         .buttonStyle(.plain)
@@ -642,7 +704,7 @@ struct BottomControlsView: View {
             .font(.subheadline.weight(.bold))
             .foregroundStyle(session.isSpoofing && !session.canResumeRoute ? .white : .black)
             .frame(maxWidth: .infinity)
-            .frame(height: 56)
+            .frame(height: 48)
             .padding(.horizontal, 8)
             .background(Capsule().fill(sessionControlColor))
             .contentShape(Capsule())
@@ -670,7 +732,7 @@ struct BottomControlsView: View {
                     .font(.subheadline.weight(.bold))
                     .foregroundStyle(.white)
                     .frame(maxWidth: .infinity)
-                    .frame(height: 56)
+                    .frame(height: 48)
                     .background(Capsule().fill(LocusTheme.danger))
             }
             .buttonStyle(.plain)
@@ -683,7 +745,7 @@ struct BottomControlsView: View {
                     .font(.subheadline.weight(.bold))
                     .foregroundStyle(.black)
                     .frame(maxWidth: .infinity)
-                    .frame(height: 56)
+                    .frame(height: 48)
                     .background(Capsule().fill(LocusTheme.accent))
             }
             .buttonStyle(.plain)
@@ -720,19 +782,14 @@ struct BottomControlsView: View {
             action()
         } label: {
             Image(systemName: systemName)
-                .font(.title2.weight(.semibold))
+                .font(.body.weight(.semibold))
                 .foregroundStyle(.primary)
-                .frame(width: 60, height: 60)
+                .frame(width: 48, height: 48)
                 .contentShape(Circle())
         }
         .buttonStyle(.plain)
     }
 
-    private var controlDivider: some View {
-        Divider()
-            .overlay(Color.white.opacity(0.22))
-            .frame(height: 38)
-    }
 }
 
 struct IconButton: View {

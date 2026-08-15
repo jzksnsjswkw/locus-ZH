@@ -61,6 +61,7 @@ struct MapHomeView: View {
                             FavoriteMapMarker(
                                 selected: selectedFavoriteID == favorite.id,
                                 onSelect: {
+                                    dismissStatusDetails()
                                     selectedFavoriteID = favorite.id
                                     pinSelected = false
                                     pinExpandedActions = false
@@ -82,6 +83,7 @@ struct MapHomeView: View {
                                 expandedActions: pinExpandedActions,
                                 isDragging: isDraggingPin,
                                 onSelect: {
+                                    dismissStatusDetails()
                                     searchFocused = false
                                     suppressNextMapTap = true
                                     selectedFavoriteID = nil
@@ -94,6 +96,7 @@ struct MapHomeView: View {
                                     }
                                 },
                                 onShowExpandedActions: {
+                                    dismissStatusDetails()
                                     searchFocused = false
                                     suppressNextMapTap = true
                                     selectedFavoriteID = nil
@@ -106,6 +109,7 @@ struct MapHomeView: View {
                                     }
                                 },
                                 onRemove: {
+                                    dismissStatusDetails()
                                     suppressNextMapTap = true
                                     withAnimation {
                                         session.pin = nil
@@ -118,6 +122,7 @@ struct MapHomeView: View {
                                 },
                                 onBuildRouteToPin: buildRouteToCurrentPin,
                                 onDragBegan: {
+                                    dismissStatusDetails()
                                     searchFocused = false
                                     suppressNextMapTap = true
                                     pinPlaceName = nil
@@ -170,6 +175,7 @@ struct MapHomeView: View {
                     visibleRegion = context.region
                 }
                 .onTapGesture { point in
+                    dismissStatusDetails()
                     searchFocused = false
                     searchPresented = false
                     guard !suppressNextMapTap, !isDraggingPin else { return }
@@ -356,6 +362,7 @@ struct MapHomeView: View {
             .onEnded { value in
                 guard case .second(true, let drag) = value,
                       let drag else { return }
+                dismissStatusDetails()
                 placeExpandedPin(at: drag.startLocation, proxy: proxy)
             }
     }
@@ -482,6 +489,7 @@ struct MapHomeView: View {
     private var mapTopControls: some View {
         VStack(spacing: 0) {
             topControlButton("square.3.layers.3d", label: "切换地图图层") {
+                dismissStatusDetails()
                 session.mapStyleIndex = (session.mapStyleIndex + 1) % 3
             }
 
@@ -490,6 +498,7 @@ struct MapHomeView: View {
                 .frame(width: 32)
 
             topControlButton("location.fill", label: "回到当前位置") {
+                dismissStatusDetails()
                 UISelectionFeedbackGenerator().selectionChanged()
                 searchFocused = false
                 goToCurrentLocation()
@@ -531,54 +540,49 @@ struct MapHomeView: View {
                     .transition(.scale(scale: 0.55, anchor: .bottomTrailing).combined(with: .opacity))
             }
         }
-        .frame(width: 148, height: 174, alignment: .bottomTrailing)
+        .frame(
+            width: 148,
+            height: session.joystickActive ? 148 : 112,
+            alignment: .bottomTrailing
+        )
         .animation(.spring(response: 0.38, dampingFraction: 0.78), value: session.joystickActive)
     }
 
     private var rightLowerControls: some View {
-        VStack(spacing: 10) {
-            VStack(spacing: 0) {
-                Button {
-                    toggleCurrentFavorite()
-                } label: {
-                    Image(systemName: currentPinIsFavorite ? "star.fill" : "star")
-                        .font(.body.weight(.semibold))
-                        .frame(width: 48, height: 48)
-                        .contentShape(Rectangle())
-                }
-                .buttonStyle(.plain)
-                .foregroundStyle(currentPinIsFavorite ? Color.yellow : Color.primary)
-                .disabled(session.pin == nil)
-                .accessibilityLabel(currentPinIsFavorite ? "取消收藏" : "添加收藏")
-
-                Divider()
-                    .overlay(Color.white.opacity(0.22))
-                    .frame(width: 32)
-
-                rightRailIconButton("folder.fill") {
-                    searchFocused = false
-                    showPlaces = true
-                }
-                .accessibilityLabel("打开收藏夹")
-            }
-            .padding(4)
-            .frame(width: MapChromeLayout.rightColumnWidth)
-            .locusGlass(.clear, in: RoundedRectangle(cornerRadius: 24, style: .continuous))
-
+        VStack(spacing: 0) {
             Button {
-                UISelectionFeedbackGenerator().selectionChanged()
-                searchPresented = true
+                dismissStatusDetails()
+                toggleCurrentFavorite()
             } label: {
-                Image(systemName: "magnifyingglass")
-                    .font(.title3.weight(.semibold))
-                    .frame(width: MapChromeLayout.rightColumnWidth, height: MapChromeLayout.rightColumnWidth)
-                    .contentShape(Circle())
+                Image(systemName: currentPinIsFavorite ? "star.fill" : "star")
+                    .font(.body.weight(.semibold))
+                    .frame(width: 48, height: 48)
+                    .contentShape(Rectangle())
             }
             .buttonStyle(.plain)
-            .locusGlass(.interactive, in: Circle())
-            .accessibilityLabel("搜索地点")
+            .foregroundStyle(currentPinIsFavorite ? Color.yellow : Color.primary)
+            .disabled(session.pin == nil)
+            .accessibilityLabel(currentPinIsFavorite ? "取消收藏" : "添加收藏")
+
+            Divider()
+                .overlay(Color.white.opacity(0.22))
+                .frame(width: 32)
+
+            rightRailIconButton("folder.fill") {
+                dismissStatusDetails()
+                searchFocused = false
+                showPlaces = true
+            }
+            .accessibilityLabel("打开收藏夹")
         }
+        .padding(4)
+        .frame(width: MapChromeLayout.rightColumnWidth)
+        .locusGlass(.clear, in: RoundedRectangle(cornerRadius: 24, style: .continuous))
         .foregroundStyle(.primary)
+    }
+
+    private func dismissStatusDetails() {
+        NotificationCenter.default.post(name: .locusDismissStatusDetails, object: nil)
     }
 
     private var bottomControlClearance: CGFloat {

@@ -506,7 +506,8 @@ struct MapHomeView: View {
         }
         .padding(4)
         .frame(width: MapChromeLayout.rightColumnWidth)
-        .locusGlass(.clear, in: RoundedRectangle(cornerRadius: 24, style: .continuous))
+        .locusGlass(.clear, in: Capsule())
+        .contentShape(Capsule())
         .foregroundStyle(.primary)
     }
 
@@ -577,7 +578,8 @@ struct MapHomeView: View {
         }
         .padding(4)
         .frame(width: MapChromeLayout.rightColumnWidth)
-        .locusGlass(.clear, in: RoundedRectangle(cornerRadius: 24, style: .continuous))
+        .locusGlass(.clear, in: Capsule())
+        .contentShape(Capsule())
         .foregroundStyle(.primary)
     }
 

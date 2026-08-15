@@ -45,21 +45,20 @@ struct RootView: View {
                 }
 
                 if !searchPresented {
-                    if generatedRouteReady {
-                        HStack(spacing: MapChromeLayout.spacing) {
-                            generatedRouteControls
-                                .frame(maxWidth: .infinity, alignment: .center)
-                            Color.clear
-                                .frame(width: MapChromeLayout.rightColumnWidth)
-                        }
-                        .transition(.move(edge: .bottom).combined(with: .opacity))
-                    }
-
                     HStack(alignment: .bottom, spacing: MapChromeLayout.spacing) {
-                        BottomControlsView(
-                            showSettings: $showSettings,
-                            showRouteSheet: $showRouteSheet
-                        )
+                        VStack(spacing: MapChromeLayout.spacing) {
+                            if generatedRouteReady {
+                                generatedRouteControls
+                                    .frame(maxWidth: .infinity, alignment: .center)
+                                    .transition(.move(edge: .bottom).combined(with: .opacity))
+                            }
+
+                            BottomControlsView(
+                                showSettings: $showSettings,
+                                showRouteSheet: $showRouteSheet
+                            )
+                        }
+                        .frame(maxWidth: .infinity)
 
                         bottomSearchButton
                     }

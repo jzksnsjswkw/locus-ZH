@@ -367,11 +367,12 @@ struct StatusBarView: View {
         }
         .onChange(of: session.simulated?.latitude) { _, _ in
             syncLiveActivity()
-            updateLocationSummary()
         }
         .onChange(of: session.simulated?.longitude) { _, _ in
             syncLiveActivity()
-            updateLocationSummary()
+        }
+        .onChange(of: session.locationSummaryRevision) { _, _ in
+            updateLocationSummary(force: true)
         }
         .onChange(of: session.pin?.latitude) { _, _ in
             updateLocationSummary()
@@ -550,10 +551,10 @@ struct StatusBarView: View {
         session.simulated ?? session.selectedTargetCoordinate ?? session.realMapCoordinate
     }
 
-    private func updateLocationSummary() {
+    private func updateLocationSummary(force: Bool = false) {
         guard !session.routeActive, !session.routePaused else { return }
         guard let coordinate = locationSummaryCoordinate else { return }
-        locationSummary.requestUpdate(to: coordinate)
+        locationSummary.requestUpdate(to: coordinate, force: force)
     }
 
     private func syncLiveActivity() {
@@ -610,10 +611,11 @@ private final class MapLocationSummary: ObservableObject {
         geocoder.cancelGeocode()
     }
 
-    func requestUpdate(to coordinate: CLLocationCoordinate2D) {
+    func requestUpdate(to coordinate: CLLocationCoordinate2D, force: Bool = false) {
         let lookupCoordinate = ChinaCoordinateTransform.mapCoordinateToSystemCoordinate(coordinate)
         let location = CLLocation(latitude: lookupCoordinate.latitude, longitude: lookupCoordinate.longitude)
-        if let lastAttemptLocation,
+        if !force,
+           let lastAttemptLocation,
            let lastAttemptAt,
            location.distance(from: lastAttemptLocation) < 2_000,
            Date().timeIntervalSince(lastAttemptAt) < 300 {
@@ -743,6 +745,9 @@ struct BottomControlsView: View {
                     joystickButton
                     if session.canResumeRoute {
                         pausedRouteControls
+                    } else if showsCrosshairSessionControls {
+                        crosshairSessionControls
+                            .padding(.leading, 6)
                     } else {
                         sessionControl
                             .padding(.leading, 6)
@@ -885,6 +890,51 @@ struct BottomControlsView: View {
             }
         }
         .accessibilityHint(session.canResumeRoute ? "轻点继续轨迹；长按可停止定位" : "")
+    }
+
+    private var showsCrosshairSessionControls: Bool {
+        session.targetSelectionMode == .crosshair &&
+            session.isSpoofing &&
+            !session.routeActive &&
+            !session.routePaused
+    }
+
+    private var crosshairSessionControls: some View {
+        HStack(spacing: 6) {
+            Button {
+                UIImpactFeedbackGenerator(style: .light).impactOccurred()
+                session.stop(pairing: pairing)
+            } label: {
+                Text("停止")
+                    .font(.subheadline.weight(.bold))
+                    .foregroundStyle(.white)
+                    .frame(maxWidth: .infinity)
+                    .frame(height: 48)
+                    .locusGlass(.interactive, tint: LocusTheme.danger, in: Capsule())
+            }
+            .buttonStyle(.plain)
+
+            Button {
+                guard let target = session.crosshairCoordinate else {
+                    session.lastError = "尚未取得准星位置，请先移动地图。"
+                    return
+                }
+                UIImpactFeedbackGenerator(style: .light).impactOccurred()
+                session.teleport(to: target, pairing: pairing)
+            } label: {
+                Text("应用当前位置")
+                    .font(.subheadline.weight(.bold))
+                    .foregroundStyle(.black)
+                    .lineLimit(1)
+                    .minimumScaleFactor(0.75)
+                    .frame(maxWidth: .infinity)
+                    .frame(height: 48)
+                    .locusGlass(.interactive, tint: LocusTheme.accent, in: Capsule())
+            }
+            .buttonStyle(.plain)
+            .disabled(session.crosshairCoordinate == nil || session.isBusy)
+        }
+        .frame(maxWidth: .infinity)
     }
 
     private var pausedRouteControls: some View {

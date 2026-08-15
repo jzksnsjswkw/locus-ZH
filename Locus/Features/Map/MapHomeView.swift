@@ -302,6 +302,41 @@ struct MapHomeView: View {
                 .zIndex(2)
             }
 
+            if streetViewEntryVisible,
+               !searchPresented,
+               !streetViewActive,
+               !session.joystickActive,
+               !session.routeActive,
+               !session.routePaused,
+               !generatedRouteReady,
+               !drawingRouteActive {
+                VStack {
+                    Spacer()
+                    HStack {
+                        Button(action: openStreetView) {
+                            Image(systemName: "binoculars.fill")
+                                .font(.body.weight(.semibold))
+                                .frame(
+                                    width: MapChromeLayout.rightColumnWidth,
+                                    height: MapChromeLayout.rightColumnWidth
+                                )
+                                .contentShape(Circle())
+                        }
+                        .buttonStyle(.plain)
+                        .foregroundStyle(.blue)
+                        .locusGlass(.interactive, in: Circle())
+                        .matchedGeometryEffect(id: "streetPreview", in: streetViewNamespace)
+                        .transition(.scale.combined(with: .opacity))
+                        .accessibilityLabel("打开街景")
+
+                        Spacer()
+                    }
+                    .padding(.leading, 16)
+                    .padding(.bottom, bottomControlClearance)
+                }
+                .zIndex(2)
+            }
+
             if searchPresented, !streetViewActive {
                 VStack(spacing: 8) {
                     Spacer(minLength: 0)
@@ -564,36 +599,17 @@ struct MapHomeView: View {
     }
 
     private var crosshairTarget: some View {
-        VStack(spacing: 10) {
-            ZStack {
-                Rectangle()
-                    .frame(width: 30, height: 2)
-                Rectangle()
-                    .frame(width: 2, height: 30)
-            }
-                .foregroundStyle(.white)
-                .shadow(color: .black.opacity(0.75), radius: 2, y: 1)
-                .frame(width: 34, height: 34)
-                .allowsHitTesting(false)
-
-            if session.isSpoofing, !session.isMoving, !session.routePaused,
-               session.selectedTargetCoordinate != nil {
-                Button {
-                    guard let target = session.selectedTargetCoordinate else { return }
-                    UIImpactFeedbackGenerator(style: .light).impactOccurred()
-                    session.teleport(to: target, pairing: pairing)
-                } label: {
-                    Label("应用准星位置", systemImage: "location.fill")
-                        .font(.caption.weight(.semibold))
-                        .padding(.horizontal, 12)
-                        .frame(height: 34)
-                }
-                .buttonStyle(.plain)
-                .foregroundStyle(.black)
-                .locusGlass(.interactive, tint: LocusTheme.accent, in: Capsule())
-            }
+        ZStack {
+            Rectangle()
+                .frame(width: 30, height: 2)
+            Rectangle()
+                .frame(width: 2, height: 30)
         }
+        .foregroundStyle(.white)
+        .shadow(color: .black.opacity(0.75), radius: 2, y: 1)
+        .frame(width: 34, height: 34)
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .center)
+        .allowsHitTesting(false)
     }
 
     private var searchBar: some View {
@@ -777,24 +793,6 @@ struct MapHomeView: View {
                             )
                             .transition(.move(edge: .bottom).combined(with: .opacity))
                     }
-                    if streetViewEntryVisible {
-                        Button(action: openStreetView) {
-                            Image(systemName: "binoculars.fill")
-                                .font(.body.weight(.semibold))
-                                .frame(
-                                    width: MapChromeLayout.rightColumnWidth,
-                                    height: MapChromeLayout.rightColumnWidth
-                                )
-                                .contentShape(Circle())
-                        }
-                        .buttonStyle(.plain)
-                        .foregroundStyle(.blue)
-                        .locusGlass(.interactive, in: Circle())
-                        .matchedGeometryEffect(id: "streetPreview", in: streetViewNamespace)
-                        .offset(x: -(MapChromeLayout.rightColumnWidth + 10))
-                        .transition(.scale.combined(with: .opacity))
-                        .accessibilityLabel("打开街景")
-                    }
                 }
                 .matchedGeometryEffect(id: "rightLowerControl", in: rightLowerControlNamespace)
                 .transition(.scale(scale: 0.55, anchor: .bottomTrailing).combined(with: .opacity))
@@ -918,21 +916,21 @@ struct MapHomeView: View {
     /// Centers on the spoofed fix while spoofing, otherwise the real GPS —
     /// never the leftover teleport pin (`.automatic` would frame that marker).
     private func goToCurrentLocation() {
-        let fallbackDistance: CLLocationDistance = 900
+        let recenterDistance: CLLocationDistance = 750
         let currentHeading = visibleCamera?.heading ?? 0
         let currentPitch = visibleCamera?.pitch ?? 0
         withAnimation(.easeInOut(duration: 0.35)) {
             if session.isSpoofing, let sim = session.simulated {
                 position = .camera(MapCamera(
                     centerCoordinate: sim,
-                    distance: visibleCamera?.distance ?? fallbackDistance,
+                    distance: recenterDistance,
                     heading: currentHeading,
                     pitch: currentPitch
                 ))
             } else if let real = session.realMapCoordinate {
                 position = .camera(MapCamera(
                     centerCoordinate: real,
-                    distance: visibleCamera?.distance ?? fallbackDistance,
+                    distance: recenterDistance,
                     heading: currentHeading,
                     pitch: currentPitch
                 ))

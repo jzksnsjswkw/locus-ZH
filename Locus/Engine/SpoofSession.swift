@@ -73,6 +73,7 @@ final class SpoofSession: ObservableObject {
     @Published var status: SpoofStatus = .idle
     @Published var pin: CLLocationCoordinate2D?
     @Published var simulated: CLLocationCoordinate2D?
+    @Published private(set) var locationSummaryRevision: UInt = 0
     @Published var travelMode: TravelMode = .walk {
         didSet { UserDefaults.standard.set(travelMode.rawValue, forKey: "locus.travelMode") }
     }
@@ -727,6 +728,7 @@ final class SpoofSession: ObservableObject {
             startResend(pairing: pairing)
             startHealth(pairing: pairing)
             if markRecent {
+                locationSummaryRevision &+= 1
                 pushRecent(coordinate)
             }
         case .failure(let error):

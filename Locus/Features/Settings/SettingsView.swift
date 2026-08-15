@@ -357,7 +357,7 @@ struct PlacesView: View {
                 }
 
             }
-            .navigationTitle("地点")
+            .navigationTitle("收藏夹")
             .task {
                 await session.backfillFavoriteCountries()
             }

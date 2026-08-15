@@ -42,13 +42,7 @@ struct StreetViewMode: View {
                 ZStack(alignment: .topTrailing) {
                     Group {
                         if scene != nil {
-                            LookAroundPreview(
-                                scene: $scene,
-                                allowsNavigation: true,
-                                showsRoadLabels: true,
-                                pointsOfInterest: .all,
-                                badgePosition: .bottomTrailing
-                            )
+                            InteractiveLookAroundView(scene: $scene)
                         } else {
                             ZStack {
                                 Color(uiColor: .secondarySystemBackground)
@@ -63,27 +57,29 @@ struct StreetViewMode: View {
                     }
                     .matchedGeometryEffect(id: "streetPreview", in: namespace)
 
-                    HStack(spacing: 8) {
+                    HStack(spacing: 10) {
                         Button {
                             showFullScreenViewer = true
                         } label: {
                             Image(systemName: "arrow.up.left.and.arrow.down.right")
+                                .font(.subheadline.weight(.semibold))
                                 .frame(width: 42, height: 42)
                         }
+                        .buttonStyle(.plain)
+                        .locusGlass(.interactive, in: Circle())
                         .disabled(scene == nil)
                         .accessibilityLabel("全屏查看街景")
 
                         Button("完成", action: onDone)
                             .font(.subheadline.weight(.semibold))
                             .frame(height: 42)
-                            .padding(.horizontal, 4)
+                            .padding(.horizontal, 14)
+                            .buttonStyle(.plain)
+                            .locusGlass(.interactive, in: Capsule())
                             .accessibilityLabel("退出街景")
                     }
-                    .buttonStyle(.plain)
-                    .padding(8)
-                    .locusGlass(.clear, in: Capsule())
-                    .padding(.top, 8)
-                    .padding(.trailing, 12)
+                    .padding(.top, 16)
+                    .padding(.trailing, 16)
                 }
                 .frame(height: max(280, geometry.size.height * 0.48))
                 .clipShape(
@@ -96,64 +92,57 @@ struct StreetViewMode: View {
                 .shadow(color: .black.opacity(0.22), radius: 12, y: 6)
                 .zIndex(1)
 
-                ZStack(alignment: .bottomTrailing) {
-                    Map(position: $mapPosition) {
-                        MapCircle(center: confirmedCoordinate, radius: 55)
-                            .foregroundStyle(Color.blue.opacity(0.16))
-                        MapCircle(center: confirmedCoordinate, radius: 55)
-                            .stroke(Color.blue, lineWidth: 3)
-                        Annotation("已确认街景", coordinate: confirmedCoordinate) {
-                            Image(systemName: "binoculars.fill")
-                                .font(.body.weight(.bold))
-                                .foregroundStyle(.white)
-                                .frame(width: 38, height: 38)
-                                .background(Circle().fill(Color.blue))
-                                .overlay(Circle().stroke(.white, lineWidth: 2))
-                                .shadow(color: .black.opacity(0.3), radius: 3, y: 1)
+                ZStack {
+                    Map(position: $mapPosition)
+                        .mapStyle(.standard(elevation: .realistic))
+                        .mapControlVisibility(.hidden)
+                        .onMapCameraChange(frequency: .onEnd) { context in
+                            currentRegion = context.region
+                            currentCamera = context.camera
+                            onMapCenterChanged(context.region.center)
                         }
-                    }
-                    .mapStyle(.standard(elevation: .realistic))
-                    .mapControlVisibility(.hidden)
-                    .onMapCameraChange(frequency: .onEnd) { context in
-                        currentRegion = context.region
-                        currentCamera = context.camera
-                        onMapCenterChanged(context.region.center)
-                    }
 
-                    VStack(alignment: .trailing, spacing: 10) {
-                        Text("蓝色标记为已确认街景位置")
-                            .font(.caption2.weight(.medium))
-                            .foregroundStyle(.secondary)
-                            .padding(.horizontal, 10)
-                            .frame(height: 30)
+                    Image(systemName: "binoculars.fill")
+                        .font(.body.weight(.bold))
+                        .foregroundStyle(.white)
+                        .frame(width: 40, height: 40)
+                        .background(Circle().fill(Color.blue))
+                        .overlay(Circle().stroke(.white, lineWidth: 2))
+                        .shadow(color: .black.opacity(0.28), radius: 3, y: 1)
+                        .allowsHitTesting(false)
+                        .accessibilityHidden(true)
+
+                    VStack {
+                        Spacer()
+                        HStack {
+                            Spacer()
+                            VStack(spacing: 0) {
+                                Button(action: faceNorth) {
+                                    Image(systemName: "location.north.line.fill")
+                                        .font(.body.weight(.semibold))
+                                        .frame(width: 48, height: 48)
+                                }
+                                .accessibilityLabel("地图回正北")
+
+                                Divider()
+                                    .overlay(Color.white.opacity(0.22))
+                                    .frame(width: 32)
+
+                                Button(action: toggleDimension) {
+                                    Text(isThreeDimensional ? "2D" : "3D")
+                                        .font(.subheadline.weight(.bold))
+                                        .frame(width: 48, height: 48)
+                                }
+                                .accessibilityLabel(isThreeDimensional ? "切换为二维地图" : "切换为三维地图")
+                            }
+                            .buttonStyle(.plain)
+                            .foregroundStyle(.primary)
+                            .padding(4)
                             .locusGlass(.clear, in: Capsule())
-
-                        VStack(spacing: 0) {
-                            Button(action: faceNorth) {
-                                Image(systemName: "location.north.line.fill")
-                                    .font(.body.weight(.semibold))
-                                    .frame(width: 48, height: 48)
-                            }
-                            .accessibilityLabel("地图回正北")
-
-                            Divider()
-                                .overlay(Color.white.opacity(0.22))
-                                .frame(width: 32)
-
-                            Button(action: toggleDimension) {
-                                Text(isThreeDimensional ? "2D" : "3D")
-                                    .font(.subheadline.weight(.bold))
-                                    .frame(width: 48, height: 48)
-                            }
-                            .accessibilityLabel(isThreeDimensional ? "切换为二维地图" : "切换为三维地图")
                         }
-                        .buttonStyle(.plain)
-                        .foregroundStyle(.primary)
-                        .padding(4)
-                        .locusGlass(.clear, in: Capsule())
+                        .padding(.trailing, 16)
+                        .padding(.bottom, 20)
                     }
-                    .padding(.trailing, 16)
-                    .padding(.bottom, 20)
                 }
             }
         }
@@ -196,5 +185,45 @@ struct StreetViewMode: View {
             heading: 0,
             pitch: isThreeDimensional ? 60 : 0
         )
+    }
+}
+
+private struct InteractiveLookAroundView: UIViewControllerRepresentable {
+    @Binding var scene: MKLookAroundScene?
+
+    func makeCoordinator() -> Coordinator {
+        Coordinator(scene: $scene)
+    }
+
+    func makeUIViewController(context: Context) -> MKLookAroundViewController {
+        guard let scene else {
+            preconditionFailure("InteractiveLookAroundView requires a scene")
+        }
+        let controller = MKLookAroundViewController(scene: scene)
+        controller.delegate = context.coordinator
+        controller.isNavigationEnabled = true
+        controller.showsRoadLabels = true
+        controller.badgePosition = .bottomTrailing
+        return controller
+    }
+
+    func updateUIViewController(_ controller: MKLookAroundViewController, context: Context) {
+        context.coordinator.scene = $scene
+        guard let scene, controller.scene !== scene else { return }
+        controller.scene = scene
+    }
+
+    final class Coordinator: NSObject, MKLookAroundViewControllerDelegate {
+        var scene: Binding<MKLookAroundScene?>
+
+        init(scene: Binding<MKLookAroundScene?>) {
+            self.scene = scene
+        }
+
+        func lookAroundViewControllerDidUpdateScene(_ viewController: MKLookAroundViewController) {
+            guard let updatedScene = viewController.scene,
+                  scene.wrappedValue !== updatedScene else { return }
+            scene.wrappedValue = updatedScene
+        }
     }
 }

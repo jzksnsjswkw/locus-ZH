@@ -25,7 +25,7 @@ struct LocusApp: App {
             }
             .environmentObject(session)
             .environmentObject(pairing)
-            .preferredColorScheme(.dark)
+            .preferredColorScheme(session.appearanceMode.colorScheme)
             .onOpenURL { url in
                 handleIncoming(url)
             }

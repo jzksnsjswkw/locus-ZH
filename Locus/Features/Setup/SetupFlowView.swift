@@ -59,7 +59,6 @@ struct SetupFlowView: View {
             }
             .padding(.bottom, 8)
         }
-        .preferredColorScheme(.dark)
         .animation(.spring(response: 0.45, dampingFraction: 0.86), value: step)
         .onAppear {
             withAnimation(.easeOut(duration: 0.7)) { appear = true }

@@ -95,6 +95,12 @@ final class SpoofSession: ObservableObject {
     @Published var restoreLastMapView = false {
         didSet { UserDefaults.standard.set(restoreLastMapView, forKey: "locus.restoreLastMapView") }
     }
+    @Published var appearanceMode: AppAppearanceMode = .system {
+        didSet { UserDefaults.standard.set(appearanceMode.rawValue, forKey: "locus.appearanceMode") }
+    }
+    @Published var zoomSliderEnabled = false {
+        didSet { UserDefaults.standard.set(zoomSliderEnabled, forKey: "locus.zoomSliderEnabled") }
+    }
     @Published var lastError: String?
     @Published var isBusy = false
     @Published var joystickActive = false
@@ -154,6 +160,10 @@ final class SpoofSession: ObservableObject {
             : UserDefaults.standard.bool(forKey: "locus.searchHistoryEnabled")
         autoFollowRoute = UserDefaults.standard.bool(forKey: "locus.autoFollowRoute")
         restoreLastMapView = UserDefaults.standard.bool(forKey: "locus.restoreLastMapView")
+        appearanceMode = AppAppearanceMode(
+            rawValue: UserDefaults.standard.string(forKey: "locus.appearanceMode") ?? ""
+        ) ?? .system
+        zoomSliderEnabled = UserDefaults.standard.bool(forKey: "locus.zoomSliderEnabled")
     }
 
     var selectedTargetCoordinate: CLLocationCoordinate2D? {
@@ -214,7 +224,9 @@ final class SpoofSession: ObservableObject {
                 lookAroundEnabled: lookAroundEnabled,
                 searchHistoryEnabled: searchHistoryEnabled,
                 autoFollowRoute: autoFollowRoute,
-                restoreLastMapView: restoreLastMapView
+                restoreLastMapView: restoreLastMapView,
+                appearanceMode: appearanceMode.rawValue,
+                zoomSliderEnabled: zoomSliderEnabled
             )
         )
     }
@@ -245,6 +257,12 @@ final class SpoofSession: ObservableObject {
         searchHistoryEnabled = backup.preferences.searchHistoryEnabled
         autoFollowRoute = backup.preferences.autoFollowRoute
         restoreLastMapView = backup.preferences.restoreLastMapView
+        if let storedAppearance = backup.preferences.appearanceMode {
+            appearanceMode = AppAppearanceMode(rawValue: storedAppearance) ?? .system
+        }
+        if let storedZoomSliderEnabled = backup.preferences.zoomSliderEnabled {
+            zoomSliderEnabled = storedZoomSliderEnabled
+        }
     }
 
     func saveMapRegion(_ region: MKCoordinateRegion) {

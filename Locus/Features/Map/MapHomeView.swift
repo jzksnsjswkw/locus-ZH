@@ -11,9 +11,11 @@ struct MapHomeView: View {
     @Binding var generatedRouteReady: Bool
     @Binding var drawingRouteActive: Bool
     @Binding var drawingRoutePointCount: Int
+    @Binding var streetViewActive: Bool
 
     @StateObject private var search = PlaceSearchCompleter()
     @Namespace private var rightLowerControlNamespace
+    @Namespace private var streetViewNamespace
     @State private var position: MapCameraPosition = .userLocation(fallback: .automatic)
     @State private var searchText = ""
     @FocusState private var searchFocused: Bool
@@ -23,7 +25,14 @@ struct MapHomeView: View {
     @State private var routeIsHandDrawn = false
     @State private var routeCameraRevision: UInt = 0
     @State private var visibleRegion: MKCoordinateRegion?
+    @State private var visibleCamera: MapCamera?
     @State private var edgeZoomStartRegion: MKCoordinateRegion?
+    @State private var lastLocationButtonTap: Date?
+    @State private var lookAroundScene: MKLookAroundScene?
+    @State private var lookAroundCoordinate: CLLocationCoordinate2D?
+    @State private var lookAroundAvailable = false
+    @State private var lookAroundRequest: MKLookAroundSceneRequest?
+    @State private var lookAroundProbeTask: Task<Void, Never>?
     @State private var isRouting = false
     @State private var showGPXImporter = false
     @State private var drawnPath: [CLLocationCoordinate2D] = []
@@ -204,6 +213,7 @@ struct MapHomeView: View {
                 }
                 .onMapCameraChange(frequency: .onEnd) { context in
                     visibleRegion = context.region
+                    visibleCamera = context.camera
                     session.saveMapRegion(context.region)
                     if session.targetSelectionMode == .crosshair {
                         session.crosshairCoordinate = context.region.center
@@ -216,6 +226,9 @@ struct MapHomeView: View {
                             pinPlaceName = nil
                             searchNamedCoordinate = nil
                         }
+                    }
+                    if !streetViewActive {
+                        scheduleLookAroundProbe(for: context.region)
                     }
                 }
                 .onTapGesture { point in
@@ -259,17 +272,19 @@ struct MapHomeView: View {
                     }
                 }
             }
-            .background(Color.black.ignoresSafeArea())
+            .background(Color(uiColor: .systemBackground).ignoresSafeArea())
 
-            if session.targetSelectionMode == .crosshair, !drawMode, !searchPresented {
+            if session.targetSelectionMode == .crosshair, !drawMode, !searchPresented, !streetViewActive {
                 crosshairTarget
                     .zIndex(2)
             }
 
-            topChrome
-                .zIndex(3)
+            if !streetViewActive {
+                topChrome
+                    .zIndex(3)
+            }
 
-            if !searchPresented {
+            if !searchPresented, !streetViewActive {
                 VStack {
                     Spacer()
                     HStack {
@@ -285,7 +300,7 @@ struct MapHomeView: View {
                 .zIndex(2)
             }
 
-            if searchPresented {
+            if searchPresented, !streetViewActive {
                 VStack(spacing: 8) {
                     Spacer(minLength: 0)
                     if searchText.isEmpty, session.searchHistoryEnabled, !session.searchHistory.isEmpty {
@@ -301,7 +316,7 @@ struct MapHomeView: View {
                 .zIndex(4)
             }
 
-            if let favoriteToast {
+            if let favoriteToast, !streetViewActive {
                 Text(favoriteToast)
                     .font(.subheadline.weight(.semibold))
                     .padding(.horizontal, 14)
@@ -311,6 +326,20 @@ struct MapHomeView: View {
                     .allowsHitTesting(false)
                     .transition(.move(edge: .top).combined(with: .opacity))
                     .zIndex(3)
+            }
+
+            if streetViewActive,
+               let scene = lookAroundScene,
+               let coordinate = lookAroundCoordinate {
+                StreetViewMode(
+                    scene: $lookAroundScene,
+                    confirmedCoordinate: coordinate,
+                    namespace: streetViewNamespace,
+                    onMapCenterChanged: requestStreetViewScene,
+                    onDone: closeStreetView
+                )
+                .transition(.opacity)
+                .zIndex(10)
             }
         }
         .onAppear {
@@ -342,6 +371,11 @@ struct MapHomeView: View {
             favoriteToastTask?.cancel()
             favoriteToastTask = nil
             favoriteToast = nil
+            lookAroundProbeTask?.cancel()
+            lookAroundProbeTask = nil
+            lookAroundRequest?.cancel()
+            lookAroundRequest = nil
+            streetViewActive = false
             generatedRouteReady = false
             drawingRouteActive = false
             drawingRoutePointCount = 0
@@ -383,6 +417,15 @@ struct MapHomeView: View {
             closePinActions()
             if mode == .crosshair {
                 session.crosshairCoordinate = visibleRegion?.center ?? session.pin ?? session.simulated ?? session.realMapCoordinate
+            }
+        }
+        .onChange(of: session.lookAroundEnabled) { _, enabled in
+            if enabled {
+                if let visibleRegion {
+                    scheduleLookAroundProbe(for: visibleRegion, immediately: true)
+                }
+            } else {
+                clearLookAroundState()
             }
         }
         .onChange(of: simulatedCoordinateKey) { _, _ in
@@ -519,10 +562,15 @@ struct MapHomeView: View {
 
     private var crosshairTarget: some View {
         VStack(spacing: 10) {
-            Image(systemName: "scope")
-                .font(.system(size: 34, weight: .medium))
+            ZStack {
+                Rectangle()
+                    .frame(width: 30, height: 2)
+                Rectangle()
+                    .frame(width: 2, height: 30)
+            }
                 .foregroundStyle(.white)
-                .shadow(color: .black.opacity(0.65), radius: 3, y: 1)
+                .shadow(color: .black.opacity(0.75), radius: 2, y: 1)
+                .frame(width: 34, height: 34)
                 .allowsHitTesting(false)
 
             if session.isSpoofing, !session.isMoving, !session.routePaused,
@@ -716,10 +764,34 @@ struct MapHomeView: View {
                 .matchedGeometryEffect(id: "rightLowerControl", in: rightLowerControlNamespace)
                 .transition(.scale(scale: 0.55, anchor: .bottomTrailing).combined(with: .opacity))
             } else {
-                ZStack(alignment: .topTrailing) {
+                ZStack(alignment: .bottomTrailing) {
                     rightLowerControls
-                    railZoomHandle
-                        .offset(x: -(MapChromeLayout.rightColumnWidth + 6), y: 4)
+                    if session.zoomSliderEnabled {
+                        railZoomHandle
+                            .offset(
+                                x: -(MapChromeLayout.rightColumnWidth - 32) / 2,
+                                y: -(MapChromeLayout.rightColumnWidth * 4 + 10)
+                            )
+                            .transition(.move(edge: .bottom).combined(with: .opacity))
+                    }
+                    if lookAroundAvailable, lookAroundScene != nil {
+                        Button(action: openStreetView) {
+                            Image(systemName: "binoculars.fill")
+                                .font(.body.weight(.semibold))
+                                .frame(
+                                    width: MapChromeLayout.rightColumnWidth,
+                                    height: MapChromeLayout.rightColumnWidth
+                                )
+                                .contentShape(Circle())
+                        }
+                        .buttonStyle(.plain)
+                        .foregroundStyle(.blue)
+                        .locusGlass(.interactive, in: Circle())
+                        .matchedGeometryEffect(id: "streetPreview", in: streetViewNamespace)
+                        .offset(x: -(MapChromeLayout.rightColumnWidth + 10))
+                        .transition(.scale.combined(with: .opacity))
+                        .accessibilityLabel("打开街景")
+                    }
                 }
                 .matchedGeometryEffect(id: "rightLowerControl", in: rightLowerControlNamespace)
                 .transition(.scale(scale: 0.55, anchor: .bottomTrailing).combined(with: .opacity))
@@ -739,16 +811,22 @@ struct MapHomeView: View {
             onChanged: updateEdgeZoom,
             onEnded: endEdgeZoom
         )
-        .frame(width: 28, height: 104)
+        .frame(width: 32, height: MapChromeLayout.rightColumnWidth * 3)
         .overlay {
-            Capsule()
-                .fill(Color.white.opacity(0.35))
-                .frame(width: 3, height: 34)
+            VStack(spacing: 8) {
+                Image(systemName: "chevron.up")
+                Capsule()
+                    .fill(Color.primary.opacity(0.45))
+                    .frame(width: 3, height: 70)
+                Image(systemName: "chevron.down")
+            }
+                .font(.caption2.weight(.bold))
+                .foregroundStyle(.secondary)
                 .allowsHitTesting(false)
         }
         .locusGlass(.clear, in: Capsule())
         .accessibilityLabel("地图缩放手势区")
-        .accessibilityHint("按住半秒，向上滑放大，向下滑缩小")
+        .accessibilityHint("直接向上滑放大，向下滑缩小")
     }
 
     private var rightLowerControls: some View {
@@ -796,9 +874,9 @@ struct MapHomeView: View {
                 dismissStatusDetails()
                 UISelectionFeedbackGenerator().selectionChanged()
                 searchFocused = false
-                goToCurrentLocation()
+                handleLocationButtonTap()
             }
-            .accessibilityLabel("回到当前位置")
+            .accessibilityLabel("回到当前位置；再次轻点回正北")
         }
         .padding(4)
         .frame(width: MapChromeLayout.rightColumnWidth)
@@ -837,19 +915,23 @@ struct MapHomeView: View {
     /// Centers on the spoofed fix while spoofing, otherwise the real GPS —
     /// never the leftover teleport pin (`.automatic` would frame that marker).
     private func goToCurrentLocation() {
-        let meters: CLLocationDistance = 900
+        let fallbackDistance: CLLocationDistance = 900
+        let currentHeading = visibleCamera?.heading ?? 0
+        let currentPitch = visibleCamera?.pitch ?? 0
         withAnimation(.easeInOut(duration: 0.35)) {
             if session.isSpoofing, let sim = session.simulated {
-                position = .region(MKCoordinateRegion(
-                    center: sim,
-                    latitudinalMeters: meters,
-                    longitudinalMeters: meters
+                position = .camera(MapCamera(
+                    centerCoordinate: sim,
+                    distance: visibleCamera?.distance ?? fallbackDistance,
+                    heading: currentHeading,
+                    pitch: currentPitch
                 ))
             } else if let real = session.realMapCoordinate {
-                position = .region(MKCoordinateRegion(
-                    center: real,
-                    latitudinalMeters: meters,
-                    longitudinalMeters: meters
+                position = .camera(MapCamera(
+                    centerCoordinate: real,
+                    distance: visibleCamera?.distance ?? fallbackDistance,
+                    heading: currentHeading,
+                    pitch: currentPitch
                 ))
             } else {
                 position = .userLocation(
@@ -862,6 +944,127 @@ struct MapHomeView: View {
                 )
             }
         }
+    }
+
+    private func handleLocationButtonTap() {
+        let now = Date()
+        if let lastLocationButtonTap,
+           now.timeIntervalSince(lastLocationButtonTap) <= 2 {
+            faceMapNorth()
+            self.lastLocationButtonTap = nil
+        } else {
+            goToCurrentLocation()
+            lastLocationButtonTap = now
+        }
+    }
+
+    private func faceMapNorth() {
+        guard let camera = visibleCamera else {
+            goToCurrentLocation()
+            return
+        }
+        withAnimation(.easeInOut(duration: 0.3)) {
+            position = .camera(MapCamera(
+                centerCoordinate: camera.centerCoordinate,
+                distance: camera.distance,
+                heading: 0,
+                pitch: camera.pitch
+            ))
+        }
+    }
+
+    private func scheduleLookAroundProbe(
+        for region: MKCoordinateRegion,
+        immediately: Bool = false
+    ) {
+        lookAroundProbeTask?.cancel()
+        lookAroundProbeTask = nil
+        guard session.lookAroundEnabled,
+              region.span.latitudeDelta <= 0.02,
+              region.span.longitudeDelta <= 0.02 else {
+            lookAroundRequest?.cancel()
+            lookAroundRequest = nil
+            lookAroundAvailable = false
+            lookAroundScene = nil
+            lookAroundCoordinate = nil
+            return
+        }
+
+        lookAroundProbeTask = Task { @MainActor in
+            if !immediately {
+                try? await Task.sleep(for: .milliseconds(450))
+            }
+            guard !Task.isCancelled else { return }
+            loadLookAroundScene(at: region.center, preserveCurrentSceneOnFailure: false)
+        }
+    }
+
+    private func requestStreetViewScene(at coordinate: CLLocationCoordinate2D) {
+        lookAroundProbeTask?.cancel()
+        lookAroundProbeTask = Task { @MainActor in
+            try? await Task.sleep(for: .milliseconds(350))
+            guard !Task.isCancelled else { return }
+            loadLookAroundScene(at: coordinate, preserveCurrentSceneOnFailure: true)
+        }
+    }
+
+    private func loadLookAroundScene(
+        at mapCoordinate: CLLocationCoordinate2D,
+        preserveCurrentSceneOnFailure: Bool
+    ) {
+        lookAroundRequest?.cancel()
+        let request = MKLookAroundSceneRequest(
+            coordinate: ChinaCoordinateTransform.mapCoordinateToSystemCoordinate(mapCoordinate)
+        )
+        lookAroundRequest = request
+        request.getSceneWithCompletionHandler { scene, _ in
+            DispatchQueue.main.async {
+                guard self.lookAroundRequest === request else { return }
+                self.lookAroundRequest = nil
+                guard let scene else {
+                    if !preserveCurrentSceneOnFailure {
+                        self.lookAroundAvailable = false
+                        self.lookAroundScene = nil
+                        self.lookAroundCoordinate = nil
+                    }
+                    return
+                }
+                self.lookAroundScene = scene
+                self.lookAroundCoordinate = mapCoordinate
+                self.lookAroundAvailable = true
+            }
+        }
+    }
+
+    private func openStreetView() {
+        guard lookAroundScene != nil, lookAroundCoordinate != nil else { return }
+        dismissStatusDetails()
+        searchPresented = false
+        UIImpactFeedbackGenerator(style: .light).impactOccurred()
+        withAnimation(.spring(response: 0.42, dampingFraction: 0.84)) {
+            streetViewActive = true
+        }
+    }
+
+    private func closeStreetView() {
+        UISelectionFeedbackGenerator().selectionChanged()
+        withAnimation(.spring(response: 0.38, dampingFraction: 0.86)) {
+            streetViewActive = false
+        }
+        if let visibleRegion {
+            scheduleLookAroundProbe(for: visibleRegion, immediately: true)
+        }
+    }
+
+    private func clearLookAroundState() {
+        lookAroundProbeTask?.cancel()
+        lookAroundProbeTask = nil
+        lookAroundRequest?.cancel()
+        lookAroundRequest = nil
+        lookAroundScene = nil
+        lookAroundCoordinate = nil
+        lookAroundAvailable = false
+        streetViewActive = false
     }
 
     private func beginEdgeZoom() {
@@ -1060,6 +1263,33 @@ struct MapHomeView: View {
                     )
                 }
             }
+        }
+    }
+
+    private func handleLocationButtonTap() {
+        let now = Date()
+        if let lastLocationButtonTap,
+           now.timeIntervalSince(lastLocationButtonTap) <= 2 {
+            faceMapNorth()
+            self.lastLocationButtonTap = nil
+        } else {
+            goToCurrentLocation()
+            lastLocationButtonTap = now
+        }
+    }
+
+    private func faceMapNorth() {
+        guard let camera = visibleCamera else {
+            goToCurrentLocation()
+            return
+        }
+        withAnimation(.easeInOut(duration: 0.3)) {
+            position = .camera(MapCamera(
+                centerCoordinate: camera.centerCoordinate,
+                distance: camera.distance,
+                heading: 0,
+                pitch: camera.pitch
+            ))
         }
     }
 
@@ -1263,23 +1493,14 @@ private struct EdgeMapZoomGesture: View {
     }
 
     private var zoomGesture: some Gesture {
-        LongPressGesture(minimumDuration: 0.5)
-            .sequenced(before: DragGesture(minimumDistance: 0))
+        DragGesture(minimumDistance: 0)
             .onChanged { value in
-                switch value {
-                case .first(true):
-                    activateIfNeeded()
-                case .second(true, let drag):
-                    activateIfNeeded()
-                    guard let drag else { return }
-                    onChanged(drag.translation.height)
-                    let feedbackStep = Int((drag.translation.height / 72).rounded(.towardZero))
-                    if feedbackStep != lastFeedbackStep {
-                        lastFeedbackStep = feedbackStep
-                        UISelectionFeedbackGenerator().selectionChanged()
-                    }
-                default:
-                    break
+                activateIfNeeded()
+                onChanged(value.translation.height)
+                let feedbackStep = Int((value.translation.height / 72).rounded(.towardZero))
+                if feedbackStep != lastFeedbackStep {
+                    lastFeedbackStep = feedbackStep
+                    UISelectionFeedbackGenerator().selectionChanged()
                 }
             }
             .onEnded { _ in

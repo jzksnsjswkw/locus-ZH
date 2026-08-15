@@ -70,6 +70,56 @@ struct SettingsView: View {
                          : "请导入由 idevice_pair 生成的 RPPairing 文件（不是 SideStore 的 lockdown .mobiledevicepairing 文件）。如果文件选择器失效（LiveContainer 中较常见），请为此应用启用“修复文件选择器（Fix File Picker）”，将文件共享到 LiveContainer → Locus，或复制 plist 内容后使用“粘贴”。")
                 }
 
+                Section("地图与交互") {
+                    Picker("定位点选择方式", selection: $session.targetSelectionMode) {
+                        ForEach(TargetSelectionMode.allCases) { mode in
+                            Label(mode.title, systemImage: mode.icon).tag(mode)
+                        }
+                    }
+
+                    Picker("地图样式", selection: $session.mapStyleIndex) {
+                        Text("标准").tag(0)
+                        Text("卫星混合").tag(1)
+                    }
+
+                    Picker("外观", selection: $session.appearanceMode) {
+                        ForEach(AppAppearanceMode.allCases) { mode in
+                            Text(mode.title).tag(mode)
+                        }
+                    }
+
+                    Toggle("街景", isOn: $session.lookAroundEnabled)
+                    Toggle("地图缩放滑条", isOn: $session.zoomSliderEnabled)
+                    Toggle("轨迹运行时自动跟随", isOn: $session.autoFollowRoute)
+                    Toggle("启动时恢复上次地图视角", isOn: $session.restoreLastMapView)
+                } footer: {
+                    Text("街景仅在 Apple 提供 Look Around 的地区可用。地图缩放滑条默认关闭；开启后可直接上下拖动。")
+                }
+
+                Section {
+                    Toggle("保存搜索历史", isOn: $session.searchHistoryEnabled)
+                    if !session.searchHistory.isEmpty {
+                        Button("清空搜索历史", role: .destructive) {
+                            confirmClearSearchHistory = true
+                        }
+                    }
+                    Button {
+                        backupDocument = LocusBackupDocument(backup: session.makeBackup())
+                        showBackupExporter = true
+                    } label: {
+                        Label("导出 Locus 备份", systemImage: "square.and.arrow.up")
+                    }
+                    Button {
+                        showBackupImporter = true
+                    } label: {
+                        Label("导入 Locus 备份", systemImage: "square.and.arrow.down")
+                    }
+                } header: {
+                    Text("搜索与数据")
+                } footer: {
+                    Text("备份包含收藏、搜索历史和安全的界面设置，不包含 RPPairing、隧道 IP、正在运行的轨迹或设备连接状态。")
+                }
+
                 Section {
                     TextField("设备隧道 IP", text: $tunnelIP)
                         .textInputAutocapitalization(.never)
@@ -103,50 +153,9 @@ struct SettingsView: View {
                 }
 
                 Section("隐私") {
-                    Text("所有数据均在设备端处理。收藏与搜索历史保存在 UserDefaults 中；无分析统计、无需账户，也不会上传任何内容。Look Around 开启后由 MapKit 向 Apple 请求所选位置的公开街景场景。")
+                    Text("所有数据均在设备端处理。收藏与搜索历史保存在 UserDefaults 中；无分析统计、无需账户，也不会上传任何内容。街景开启后，MapKit 会向 Apple 请求当前地图中心附近的公开街景场景。")
                         .font(.footnote)
                         .foregroundStyle(.secondary)
-                }
-
-                Section("地图与交互") {
-                    Picker("定位点选择方式", selection: $session.targetSelectionMode) {
-                        ForEach(TargetSelectionMode.allCases) { mode in
-                            Label(mode.title, systemImage: mode.icon).tag(mode)
-                        }
-                    }
-
-                    Picker("地图样式", selection: $session.mapStyleIndex) {
-                        Text("标准").tag(0)
-                        Text("卫星混合").tag(1)
-                    }
-
-                    Toggle("Apple Look Around", isOn: $session.lookAroundEnabled)
-                    Toggle("轨迹运行时自动跟随", isOn: $session.autoFollowRoute)
-                    Toggle("启动时恢复上次地图视角", isOn: $session.restoreLastMapView)
-                }
-
-                Section {
-                    Toggle("保存搜索历史", isOn: $session.searchHistoryEnabled)
-                    if !session.searchHistory.isEmpty {
-                        Button("清空搜索历史", role: .destructive) {
-                            confirmClearSearchHistory = true
-                        }
-                    }
-                    Button {
-                        backupDocument = LocusBackupDocument(backup: session.makeBackup())
-                        showBackupExporter = true
-                    } label: {
-                        Label("导出 Locus 备份", systemImage: "square.and.arrow.up")
-                    }
-                    Button {
-                        showBackupImporter = true
-                    } label: {
-                        Label("导入 Locus 备份", systemImage: "square.and.arrow.down")
-                    }
-                } header: {
-                    Text("搜索与数据")
-                } footer: {
-                    Text("备份包含收藏、搜索历史和安全的界面设置，不包含 RPPairing、隧道 IP、正在运行的轨迹或设备连接状态。")
                 }
 
                 Section("关于") {

@@ -42,6 +42,8 @@ struct BackupPreferences: Codable {
     var searchHistoryEnabled: Bool
     var autoFollowRoute: Bool
     var restoreLastMapView: Bool
+    var appearanceMode: String?
+    var zoomSliderEnabled: Bool?
 }
 
 enum BackupError: LocalizedError {

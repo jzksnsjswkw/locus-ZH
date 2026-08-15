@@ -27,6 +27,7 @@ struct RootView: View {
     @State private var generatedRouteReady = false
     @State private var drawingRouteActive = false
     @State private var drawingRoutePointCount = 0
+    @State private var streetViewActive = false
 
     var body: some View {
         // Bottom chrome is a sibling overlay aligned to the bottom — no full-screen
@@ -39,10 +40,12 @@ struct RootView: View {
                 showRouteSheet: $showRouteSheet,
                 generatedRouteReady: $generatedRouteReady,
                 drawingRouteActive: $drawingRouteActive,
-                drawingRoutePointCount: $drawingRoutePointCount
+                drawingRoutePointCount: $drawingRoutePointCount,
+                streetViewActive: $streetViewActive
             )
 
-            VStack(spacing: 10) {
+            if !streetViewActive {
+                VStack(spacing: 10) {
                 if let favoriteRenameSuggestion, !searchPresented {
                     renameSuggestionButton(favoriteRenameSuggestion)
                         .frame(maxWidth: .infinity, alignment: .center)
@@ -73,9 +76,11 @@ struct RootView: View {
                     }
                     .transition(.move(edge: .bottom).combined(with: .opacity))
                 }
+                }
+                .padding(.horizontal, MapChromeLayout.horizontalPadding)
+                .padding(.bottom, MapChromeLayout.bottomPadding)
+                .transition(.opacity.combined(with: .move(edge: .bottom)))
             }
-            .padding(.horizontal, MapChromeLayout.horizontalPadding)
-            .padding(.bottom, MapChromeLayout.bottomPadding)
         }
         .sheet(isPresented: $showSettings) {
             SettingsView()
@@ -127,6 +132,7 @@ struct RootView: View {
         .animation(.spring(response: 0.32, dampingFraction: 0.84), value: searchPresented)
         .animation(.spring(response: 0.32, dampingFraction: 0.84), value: generatedRouteReady)
         .animation(.spring(response: 0.32, dampingFraction: 0.84), value: drawingRouteActive)
+        .animation(.spring(response: 0.38, dampingFraction: 0.82), value: streetViewActive)
     }
 
     private var bottomSearchButton: some View {
@@ -273,10 +279,6 @@ struct StatusBarView: View {
     @StateObject private var locationSummary = MapLocationSummary()
     @State private var tunnelConnected = LocalDevVPN.isConnected
     @State private var showLocationDetails = false
-    @State private var showLookAround = false
-    @State private var lookAroundScene: MKLookAroundScene?
-    @State private var lookAroundRequest: MKLookAroundSceneRequest?
-    @State private var lookAroundLoading = false
 
     private enum Display {
         case notSpoofing
@@ -400,17 +402,6 @@ struct StatusBarView: View {
                 refreshTunnel()
             }
         }
-        .lookAroundViewer(isPresented: $showLookAround, initialScene: lookAroundScene)
-        .onChange(of: session.lookAroundEnabled) { _, enabled in
-            guard !enabled else { return }
-            lookAroundRequest?.cancel()
-            lookAroundRequest = nil
-            lookAroundScene = nil
-            showLookAround = false
-        }
-        .onDisappear {
-            lookAroundRequest?.cancel()
-        }
     }
 
     private var statusContent: some View {
@@ -484,22 +475,6 @@ struct StatusBarView: View {
                 .foregroundStyle(.white)
                 .locusGlass(.interactive, tint: Color.blue.opacity(0.45), in: Capsule())
 
-                if session.lookAroundEnabled {
-                    Button(action: loadLookAround) {
-                        Group {
-                            if lookAroundLoading {
-                                ProgressView()
-                            } else {
-                                Image(systemName: "binoculars.fill")
-                            }
-                        }
-                        .frame(width: 30, height: 30)
-                    }
-                    .buttonStyle(.plain)
-                    .locusGlass(.interactive, tint: Color.blue.opacity(0.3), in: Circle())
-                    .disabled(lookAroundLoading)
-                    .accessibilityLabel("查看 Apple Look Around")
-                }
             }
 
             Text(locationSummary.formattedAddress)
@@ -520,12 +495,11 @@ struct StatusBarView: View {
             }
 
             if let coordinate = locationSummaryCoordinate {
-                Text("纬度：\(latitudeText(coordinate.latitude))")
+                Text("纬度：\(latitudeText(coordinate.latitude))  经度：\(longitudeText(coordinate.longitude))")
                     .font(.caption2.monospacedDigit())
                     .foregroundStyle(.secondary)
-                Text("经度：\(longitudeText(coordinate.longitude))")
-                    .font(.caption2.monospacedDigit())
-                    .foregroundStyle(.secondary)
+                    .lineLimit(1)
+                    .minimumScaleFactor(0.72)
             }
         }
         .padding(12)
@@ -566,30 +540,6 @@ struct StatusBarView: View {
 
     private func longitudeText(_ longitude: Double) -> String {
         String(format: "%.5f° %@", abs(longitude), longitude >= 0 ? "E" : "W")
-    }
-
-    private func loadLookAround() {
-        guard session.lookAroundEnabled,
-              let coordinate = session.selectedTargetCoordinate ?? locationSummaryCoordinate else { return }
-        lookAroundRequest?.cancel()
-        let request = MKLookAroundSceneRequest(
-            coordinate: ChinaCoordinateTransform.mapCoordinateToSystemCoordinate(coordinate)
-        )
-        lookAroundRequest = request
-        lookAroundLoading = true
-        request.getSceneWithCompletionHandler { scene, error in
-            DispatchQueue.main.async {
-                guard self.lookAroundRequest === request else { return }
-                self.lookAroundLoading = false
-                self.lookAroundRequest = nil
-                guard let scene else {
-                    self.session.lastError = error?.localizedDescription ?? "此位置暂无 Apple Look Around。"
-                    return
-                }
-                self.lookAroundScene = scene
-                self.showLookAround = true
-            }
-        }
     }
 
     private func refreshTunnel() {
@@ -645,7 +595,7 @@ private final class MapLocationSummary: ObservableObject {
         let formatter = DateFormatter()
         formatter.locale = Locale(identifier: "zh_Hans_CN")
         formatter.timeZone = timeZone
-        formatter.dateFormat = "dd日 HH:mm"
+        formatter.dateFormat = "yyyy年 M月 d日 HH:mm"
         return formatter.string(from: date)
     }
 

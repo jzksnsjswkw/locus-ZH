@@ -74,7 +74,6 @@ struct LocusEasterEggView: View {
                 }
             }
         }
-        .preferredColorScheme(.dark)
         .statusBarHidden(true)
     }
 

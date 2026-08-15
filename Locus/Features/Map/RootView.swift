@@ -333,7 +333,6 @@ struct StatusBarView: View {
     @StateObject private var locationSummary = MapLocationSummary()
     @State private var tunnelConnected = LocalDevVPN.isConnected
     @State private var showLocationDetails = false
-    @State private var displayedMapDataSourceName = "Apple"
 
     private enum Display {
         case notSpoofing
@@ -385,7 +384,7 @@ struct StatusBarView: View {
         VStack(alignment: .leading, spacing: 8) {
             statusContent
 
-            if showLocationDetails, locationSummaryCoordinate != nil {
+            if showLocationDetails, locationSummary.coordinate != nil {
                 locationDetailsCard
                     .transition(
                         .scale(scale: 0.88, anchor: .topLeading)
@@ -395,7 +394,6 @@ struct StatusBarView: View {
         }
         .onAppear {
             refreshTunnel()
-            refreshMapDataSource()
             syncLiveActivity()
             updateLocationSummary()
         }
@@ -409,16 +407,12 @@ struct StatusBarView: View {
         .onChange(of: session.routeActive) { _, active in
             if active {
                 locationSummary.suspend()
-            } else if !session.routePaused {
-                updateLocationSummary()
             }
             syncLiveActivity()
         }
         .onChange(of: session.routePaused) { _, paused in
             if paused {
                 locationSummary.suspend()
-            } else if !session.routeActive {
-                updateLocationSummary()
             }
             syncLiveActivity()
         }
@@ -429,20 +423,7 @@ struct StatusBarView: View {
             syncLiveActivity()
         }
         .onChange(of: session.locationSummaryRevision) { _, _ in
-            refreshMapDataSource()
             updateLocationSummary(force: true)
-        }
-        .onChange(of: session.pin?.latitude) { _, _ in
-            updateLocationSummary()
-        }
-        .onChange(of: session.pin?.longitude) { _, _ in
-            updateLocationSummary()
-        }
-        .onChange(of: session.crosshairCoordinate?.latitude) { _, _ in
-            updateLocationSummary()
-        }
-        .onChange(of: session.crosshairCoordinate?.longitude) { _, _ in
-            updateLocationSummary()
         }
         .onReceive(NotificationCenter.default.publisher(for: .NEVPNStatusDidChange)) { _ in
             // LocalDevVPN connection changes show up here even though we don’t own the VPN.
@@ -479,7 +460,7 @@ struct StatusBarView: View {
                             .lineLimit(1)
                     }
 
-                    if tunnelConnected, locationSummaryCoordinate != nil {
+                    if tunnelConnected, locationSummary.coordinate != nil {
                         Text(locationSummary.shortText)
                             .font(.caption)
                             .foregroundStyle(.secondary)
@@ -552,7 +533,7 @@ struct StatusBarView: View {
                     .foregroundStyle(.secondary)
             }
 
-            if let coordinate = locationSummaryCoordinate {
+            if let coordinate = locationSummary.coordinate {
                 Text("纬度：\(latitudeText(coordinate.latitude))  经度：\(longitudeText(coordinate.longitude))")
                     .font(.caption2.monospacedDigit())
                     .foregroundStyle(.secondary)
@@ -578,7 +559,7 @@ struct StatusBarView: View {
     }
 
     private var locationCopyText: String {
-        let coordinate = locationSummaryCoordinate.map {
+        let coordinate = locationSummary.coordinate.map {
             "纬度：\(latitudeText($0.latitude))\n经度：\(longitudeText($0.longitude))"
         } ?? ""
         return [
@@ -602,7 +583,7 @@ struct StatusBarView: View {
     }
 
     private var mapDataSourceName: String {
-        displayedMapDataSourceName
+        locationSummary.mapDataSourceName
     }
 
     @ViewBuilder
@@ -636,7 +617,7 @@ struct StatusBarView: View {
             return
         }
 
-        guard locationSummaryCoordinate != nil else { return }
+        guard locationSummary.coordinate != nil else { return }
         UISelectionFeedbackGenerator().selectionChanged()
         withAnimation(.spring(response: 0.32, dampingFraction: 0.82)) {
             showLocationDetails.toggle()
@@ -651,21 +632,9 @@ struct StatusBarView: View {
         tunnelConnected = connected
     }
 
-    private var locationSummaryCoordinate: CLLocationCoordinate2D? {
-        session.simulated ?? session.selectedTargetCoordinate ?? session.realMapCoordinate
-    }
-
-    private func refreshMapDataSource() {
-        guard !session.routeActive, !session.routePaused else { return }
-        guard let coordinate = session.simulated else { return }
-        displayedMapDataSourceName = ChinaCoordinateTransform.usesMainlandChinaOffset(coordinate)
-            ? "高德"
-            : "Apple"
-    }
-
     private func updateLocationSummary(force: Bool = false) {
         guard !session.routeActive, !session.routePaused else { return }
-        guard let coordinate = locationSummaryCoordinate else { return }
+        guard let coordinate = session.simulated ?? session.realMapCoordinate else { return }
         locationSummary.requestUpdate(to: coordinate, force: force)
     }
 
@@ -693,6 +662,8 @@ private final class MapLocationSummary: ObservableObject {
     @Published private(set) var postalCode = "—"
     @Published private(set) var formattedAddress = "正在获取 Apple 地图地址"
     @Published private(set) var timeZone: TimeZone?
+    @Published private(set) var coordinate: CLLocationCoordinate2D?
+    @Published private(set) var mapDataSourceName = "Apple"
 
     var shortText: String {
         [country, city]
@@ -724,8 +695,7 @@ private final class MapLocationSummary: ObservableObject {
     }
 
     func requestUpdate(to coordinate: CLLocationCoordinate2D, force: Bool = false) {
-        let lookupCoordinate = ChinaCoordinateTransform.mapCoordinateToSystemCoordinate(coordinate)
-        let location = CLLocation(latitude: lookupCoordinate.latitude, longitude: lookupCoordinate.longitude)
+        let location = CLLocation(latitude: coordinate.latitude, longitude: coordinate.longitude)
         if !force,
            let lastAttemptLocation,
            let lastAttemptAt,
@@ -736,52 +706,59 @@ private final class MapLocationSummary: ObservableObject {
 
         lastAttemptLocation = location
         lastAttemptAt = Date()
+        self.coordinate = coordinate
         lookupTask?.cancel()
         geocoder.cancelGeocode()
 
         lookupTask = Task { [weak self] in
             guard let self else { return }
             do {
-                let placemark = try await self.geocoder.reverseGeocodeLocation(
+                let chinesePlacemark = try await self.geocoder.reverseGeocodeLocation(
                     location,
-                    preferredLocale: Locale(identifier: "en_GB")
+                    preferredLocale: Locale(identifier: "zh_Hans_CN")
                 ).first
                 guard !Task.isCancelled else { return }
-                let countryCode = placemark?.isoCountryCode
-                self.country = countryCode.flatMap {
-                    Locale(identifier: "zh_Hans_CN").localizedString(forRegionCode: $0)
-                } ?? "未知国家"
-                self.city = self.englishText(
-                    placemark?.locality ?? placemark?.subAdministrativeArea ?? placemark?.administrativeArea
-                ) ?? "未知城市"
-                self.postalCode = self.nonEmpty(placemark?.postalCode) ?? "—"
-                self.timeZone = placemark?.timeZone
-                let street = [placemark?.subThoroughfare, placemark?.thoroughfare]
-                    .compactMap(self.englishText)
-                    .joined(separator: " ")
-                let englishCountry = countryCode.flatMap {
-                    Locale(identifier: "en_GB").localizedString(forRegionCode: $0)
-                } ?? self.englishText(placemark?.country)
-                self.formattedAddress = [
-                    street.isEmpty ? self.englishText(placemark?.name) : street,
-                    self.englishText(placemark?.subLocality),
-                    self.englishText(placemark?.locality),
-                    self.englishText(placemark?.subAdministrativeArea),
-                    self.englishText(placemark?.administrativeArea),
-                    self.nonEmpty(placemark?.postalCode),
-                    englishCountry
-                ]
-                .compactMap { $0 }
-                .reduce(into: [String]()) { result, value in
-                    guard !result.contains(where: { $0.caseInsensitiveCompare(value) == .orderedSame }) else { return }
-                    result.append(value)
-                }
-                .joined(separator: ", ")
-                if self.formattedAddress.isEmpty {
-                    self.formattedAddress = "Address unavailable"
+                let countryCode = chinesePlacemark?.isoCountryCode?.uppercased()
+                self.mapDataSourceName = countryCode == "CN" ? "高德" : "Apple"
+
+                if countryCode == "CN" {
+                    let systemCoordinate = ChinaCoordinateTransform.mapCoordinateToSystemCoordinate(coordinate)
+                    let systemLocation = CLLocation(
+                        latitude: systemCoordinate.latitude,
+                        longitude: systemCoordinate.longitude
+                    )
+                    let placemark: CLPlacemark?
+                    do {
+                        placemark = try await self.geocoder.reverseGeocodeLocation(
+                            systemLocation,
+                            preferredLocale: Locale(identifier: "zh_Hans_CN")
+                        ).first ?? chinesePlacemark
+                    } catch {
+                        placemark = chinesePlacemark
+                    }
+                    guard !Task.isCancelled else { return }
+                    self.applyChinesePlacemark(placemark, countryCode: "CN")
+                } else if countryCode == "TW" {
+                    self.applyChinesePlacemark(chinesePlacemark, countryCode: "TW")
+                } else {
+                    let englishPlacemark: CLPlacemark?
+                    do {
+                        englishPlacemark = try await self.geocoder.reverseGeocodeLocation(
+                            location,
+                            preferredLocale: Locale(identifier: "en_GB")
+                        ).first ?? chinesePlacemark
+                    } catch {
+                        englishPlacemark = chinesePlacemark
+                    }
+                    guard !Task.isCancelled else { return }
+                    self.applyForeignPlacemarks(
+                        chinese: chinesePlacemark,
+                        english: englishPlacemark,
+                        countryCode: countryCode
+                    )
                 }
             } catch {
-                guard !Task.isCancelled, self.country == "正在获取" else { return }
+                guard !Task.isCancelled else { return }
                 self.country = "未知国家"
                 self.city = "未知城市"
                 self.postalCode = "—"
@@ -789,6 +766,74 @@ private final class MapLocationSummary: ObservableObject {
                 self.timeZone = nil
             }
         }
+    }
+
+    private func applyChinesePlacemark(_ placemark: CLPlacemark?, countryCode: String) {
+        let isTaiwan = countryCode == "TW"
+        country = "中国"
+        city = nonEmpty(
+            placemark?.locality ?? placemark?.subAdministrativeArea ?? placemark?.administrativeArea
+        ) ?? "未知城市"
+        postalCode = nonEmpty(placemark?.postalCode) ?? "—"
+        timeZone = placemark?.timeZone
+
+        let street = [placemark?.thoroughfare, placemark?.subThoroughfare]
+            .compactMap { nonEmpty($0) }
+            .joined()
+        let prefix = isTaiwan ? "中华人民共和国台湾省" : "中国"
+        let components = [
+            prefix,
+            nonEmpty(placemark?.administrativeArea),
+            nonEmpty(placemark?.locality),
+            nonEmpty(placemark?.subAdministrativeArea),
+            nonEmpty(placemark?.subLocality),
+            street.isEmpty ? nonEmpty(placemark?.name) : street
+        ]
+        .compactMap { $0 }
+        .reduce(into: [String]()) { result, value in
+            guard !result.contains(where: { existing in
+                existing == value || existing.contains(value)
+            }) else { return }
+            result.append(value)
+        }
+        formattedAddress = components.isEmpty ? "无法获取地址" : components.joined()
+    }
+
+    private func applyForeignPlacemarks(
+        chinese: CLPlacemark?,
+        english: CLPlacemark?,
+        countryCode: String?
+    ) {
+        country = countryCode.flatMap {
+            Locale(identifier: "zh_Hans_CN").localizedString(forRegionCode: $0)
+        } ?? nonEmpty(chinese?.country) ?? "未知国家"
+        city = nonEmpty(
+            chinese?.locality ?? chinese?.subAdministrativeArea ?? chinese?.administrativeArea
+        ) ?? "未知城市"
+        postalCode = nonEmpty(english?.postalCode ?? chinese?.postalCode) ?? "—"
+        timeZone = english?.timeZone ?? chinese?.timeZone
+
+        let street = [english?.subThoroughfare, english?.thoroughfare]
+            .compactMap { englishText($0) }
+            .joined(separator: " ")
+        let englishCountry = countryCode.flatMap {
+            Locale(identifier: "en_GB").localizedString(forRegionCode: $0)
+        } ?? englishText(english?.country)
+        let components = [
+            street.isEmpty ? englishText(english?.name) : street,
+            englishText(english?.subLocality),
+            englishText(english?.locality),
+            englishText(english?.subAdministrativeArea),
+            englishText(english?.administrativeArea),
+            nonEmpty(english?.postalCode),
+            englishCountry
+        ]
+        .compactMap { $0 }
+        .reduce(into: [String]()) { result, value in
+            guard !result.contains(where: { $0.caseInsensitiveCompare(value) == .orderedSame }) else { return }
+            result.append(value)
+        }
+        formattedAddress = components.isEmpty ? "Address unavailable" : components.joined(separator: ", ")
     }
 
     private func nonEmpty(_ value: String?) -> String? {

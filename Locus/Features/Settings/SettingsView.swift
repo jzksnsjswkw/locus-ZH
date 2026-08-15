@@ -69,8 +69,10 @@ struct SettingsView: View {
                          ? "在 iOS 27 上可使用“在此 iPhone 上配对”，无需电脑。Locus 会广播可配对主机；请前往“设置”›“隐私与安全性”›“开发者模式”›“与主机配对”，确认 6 位代码。较旧的 iOS 版本需要导入由 idevice_pair 生成的 RPPairing 文件（不是 SideStore 的 lockdown .mobiledevicepairing 文件）。LiveContainer：请为 Locus 启用“修复文件选择器（Fix File Picker）”，或使用“粘贴”/“共享”→ LiveContainer → Locus。"
                          : "请导入由 idevice_pair 生成的 RPPairing 文件（不是 SideStore 的 lockdown .mobiledevicepairing 文件）。如果文件选择器失效（LiveContainer 中较常见），请为此应用启用“修复文件选择器（Fix File Picker）”，将文件共享到 LiveContainer → Locus，或复制 plist 内容后使用“粘贴”。")
                 }
+                .locusSheetRows()
 
                 mapInteractionSection
+                    .locusSheetRows()
 
                 Section {
                     Toggle("保存搜索历史", isOn: $session.searchHistoryEnabled)
@@ -95,9 +97,12 @@ struct SettingsView: View {
                 } footer: {
                     Text("备份包含收藏、搜索历史和安全的界面设置，不包含 RPPairing、隧道 IP、正在运行的轨迹或设备连接状态。")
                 }
+                .locusSheetRows()
 
                 tunnelSection
+                    .locusSheetRows()
                 privacySection
+                    .locusSheetRows()
 
                 Section("关于") {
                     LabeledContent("版本", value: appVersion)
@@ -110,6 +115,7 @@ struct SettingsView: View {
                         .font(.footnote)
                         .foregroundStyle(.secondary)
                 }
+                .locusSheetRows()
 
                 Section {
                     Button {
@@ -334,6 +340,7 @@ struct PlacesView: View {
                         Text("在地图上选择图钉并点击星标即可收藏。")
                             .foregroundStyle(.secondary)
                     }
+                    .locusSheetRows()
                 } else {
                     ForEach(groupedFavorites) { group in
                         Section(group.id) {
@@ -355,6 +362,7 @@ struct PlacesView: View {
                                     }
                             }
                         }
+                        .locusSheetRows()
                     }
                 }
 

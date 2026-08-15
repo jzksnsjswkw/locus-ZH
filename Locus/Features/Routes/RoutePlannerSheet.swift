@@ -33,6 +33,7 @@ struct RoutePlannerSheet: View {
                     }
                     .disabled(!session.routeLoopEnabled)
                 }
+                .locusSheetRows()
 
                 Section("地图手绘") {
                     Button {
@@ -48,6 +49,7 @@ struct RoutePlannerSheet: View {
                         .font(.footnote)
                         .foregroundStyle(.secondary)
                 }
+                .locusSheetRows()
 
                 Section("运行与 GPX") {
                     Button(action: onPlay) {
@@ -60,6 +62,7 @@ struct RoutePlannerSheet: View {
                         Label("导出 GPX", systemImage: "square.and.arrow.up")
                     }
                 }
+                .locusSheetRows()
 
                 Section("生成轨迹") {
                     if session.targetSelectionMode == .crosshair {
@@ -75,6 +78,7 @@ struct RoutePlannerSheet: View {
                         .font(.footnote)
                         .foregroundStyle(.secondary)
                 }
+                .locusSheetRows()
             }
             .scrollContentBackground(.hidden)
             .background(Color.clear)

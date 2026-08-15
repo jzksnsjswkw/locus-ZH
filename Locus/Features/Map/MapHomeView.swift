@@ -4,6 +4,7 @@ import SwiftUI
 struct MapHomeView: View {
     @EnvironmentObject private var session: SpoofSession
     @EnvironmentObject private var pairing: PairingStore
+    @Environment(\.scenePhase) private var scenePhase
     @Binding var showPlaces: Bool
     @Binding var favoriteRenameSuggestion: SavedPlace?
     @Binding var searchPresented: Bool
@@ -15,6 +16,7 @@ struct MapHomeView: View {
     @Binding var drawingRoutePointCount: Int
 
     @StateObject private var search = PlaceSearchCompleter()
+    @StateObject private var mapDataSourceDetector = MapDataSourceDetector()
     @Namespace private var rightLowerControlNamespace
     @State private var position: MapCameraPosition = .userLocation(fallback: .automatic)
     @State private var searchText = ""
@@ -106,6 +108,12 @@ struct MapHomeView: View {
                     placePin(at: point, proxy: proxy)
                 }
                 .simultaneousGesture(mapLongPressGesture(proxy: proxy))
+                .overlay(alignment: .topLeading) {
+                    MapDataSourceProbe(detector: mapDataSourceDetector)
+                        .frame(width: 1, height: 1)
+                        .allowsHitTesting(false)
+                        .accessibilityHidden(true)
+                }
                 .overlay {
                     if session.mapStyleIndex != 0 {
                         ZStack {
@@ -306,6 +314,14 @@ struct MapHomeView: View {
         .onChange(of: simulatedCoordinateKey) { _, _ in
             followSimulatedLocationIfNeeded()
         }
+        .onChange(of: session.locationSummaryRevision) { _, _ in
+            mapDataSourceDetector.redetect()
+        }
+        .onChange(of: scenePhase) { _, phase in
+            if phase == .active {
+                mapDataSourceDetector.scheduleDetection()
+            }
+        }
     }
 
     private var presentedMap: some View {
@@ -341,7 +357,7 @@ struct MapHomeView: View {
                 }
             )
             .presentationDetents([.medium, .large])
-            .presentationBackground(.regularMaterial)
+            .presentationBackground(.ultraThinMaterial)
         }
         .alert("清空搜索历史", isPresented: $confirmClearSearchHistory) {
             Button("清空", role: .destructive) { session.clearSearchHistory() }
@@ -651,7 +667,7 @@ struct MapHomeView: View {
     }
 
     private var topChrome: some View {
-        StatusBarView()
+        StatusBarView(mapDataSourceDetector: mapDataSourceDetector)
             .frame(maxWidth: .infinity, alignment: .topLeading)
             .padding(.horizontal, 16)
             .padding(.bottom, 2)
@@ -1061,7 +1077,7 @@ struct MapHomeView: View {
 
     private func updateEdgeZoom(_ verticalTranslation: CGFloat) {
         guard let start = edgeZoomStartRegion else { return }
-        let scale = pow(2, Double(verticalTranslation / 180))
+        let scale = pow(2, Double(verticalTranslation / 120))
         let latitudeDelta = min(120, max(0.0005, start.span.latitudeDelta * scale))
         let longitudeDelta = min(360, max(0.0005, start.span.longitudeDelta * scale))
         position = .region(MKCoordinateRegion(

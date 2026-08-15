@@ -77,7 +77,7 @@ struct RoutePlannerSheet: View {
                 }
             }
             .scrollContentBackground(.hidden)
-            .background(.regularMaterial)
+            .background(Color.clear)
             .navigationTitle("轨迹")
             .toolbar {
                 ToolbarItem(placement: .confirmationAction) {

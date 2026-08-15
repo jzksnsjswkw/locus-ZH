@@ -92,12 +92,12 @@ struct RootView: View {
         .sheet(isPresented: $showSettings) {
             SettingsView()
                 .presentationDetents([.medium, .large])
-                .presentationBackground(.regularMaterial)
+                .presentationBackground(.ultraThinMaterial)
         }
         .sheet(isPresented: $showPlaces) {
             PlacesView()
                 .presentationDetents([.medium, .large])
-                .presentationBackground(.regularMaterial)
+                .presentationBackground(.ultraThinMaterial)
         }
         .alert("Locus", isPresented: Binding(
             get: { session.lastError != nil },
@@ -329,6 +329,7 @@ struct RootView: View {
 struct StatusBarView: View {
     @EnvironmentObject private var session: SpoofSession
     @Environment(\.scenePhase) private var scenePhase
+    @ObservedObject var mapDataSourceDetector: MapDataSourceDetector
 
     @StateObject private var locationSummary = MapLocationSummary()
     @State private var tunnelConnected = LocalDevVPN.isConnected
@@ -446,37 +447,35 @@ struct StatusBarView: View {
 
     private var statusContent: some View {
         Button(action: handleStatusTap) {
-            HStack(spacing: 8) {
-                VStack(alignment: .leading, spacing: 4) {
-                    HStack(spacing: 10) {
-                        Circle()
-                            .fill(color)
-                            .frame(width: 8, height: 8)
-                            .shadow(color: color.opacity(0.7), radius: 4)
+            VStack(alignment: .leading, spacing: 4) {
+                HStack(spacing: 10) {
+                    Circle()
+                        .fill(color)
+                        .frame(width: 8, height: 8)
+                        .shadow(color: color.opacity(0.7), radius: 4)
 
-                        Text(title)
-                            .font(.subheadline.weight(.semibold))
-                            .foregroundStyle(.primary)
-                            .lineLimit(1)
-                    }
+                    Text(title)
+                        .font(.subheadline.weight(.semibold))
+                        .foregroundStyle(.primary)
+                        .lineLimit(1)
 
-                    if tunnelConnected, locationSummary.coordinate != nil {
-                        Text(locationSummary.shortText)
-                            .font(.caption)
-                            .foregroundStyle(.secondary)
-                            .lineLimit(1)
+                    if !tunnelConnected {
+                        Image(systemName: "lock.shield.fill")
+                            .font(.caption.weight(.semibold))
+                            .foregroundStyle(LocusTheme.accent)
                     }
                 }
-                Spacer(minLength: 0)
-                if !tunnelConnected {
-                    Image(systemName: "lock.shield.fill")
-                        .font(.body.weight(.semibold))
-                        .foregroundStyle(LocusTheme.accent)
-                        .frame(width: 32, height: 32)
+
+                if tunnelConnected, locationSummary.coordinate != nil {
+                    Text(locationSummary.shortText)
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                        .lineLimit(1)
                 }
             }
             .padding(.horizontal, 14)
             .padding(.vertical, 10)
+            .fixedSize(horizontal: true, vertical: false)
             .locusGlass(.clear, in: RoundedRectangle(cornerRadius: 18, style: .continuous))
             .contentShape(RoundedRectangle(cornerRadius: 18, style: .continuous))
         }
@@ -520,8 +519,8 @@ struct StatusBarView: View {
                 Label("地图数据源", systemImage: "map.fill")
                 Spacer(minLength: 4)
                 HStack(spacing: 5) {
-                    mapDataSourceBadge("Apple", isActive: mapDataSourceName == "Apple")
-                    mapDataSourceBadge("高德", isActive: mapDataSourceName == "高德")
+                    mapDataSourceBadge("Apple", isActive: mapDataSourceDetector.source == .apple)
+                    mapDataSourceBadge("高德", isActive: mapDataSourceDetector.source == .amap)
                 }
             }
             .font(.caption2)
@@ -567,7 +566,7 @@ struct StatusBarView: View {
             "国家：\(locationSummary.country)",
             "城市：\(locationSummary.city)",
             "邮编：\(locationSummary.postalCode)",
-            "地图数据源：Apple / 高德（当前：\(mapDataSourceName)）",
+            mapDataSourceCopyLine,
             coordinate
         ]
         .filter { !$0.isEmpty }
@@ -583,7 +582,12 @@ struct StatusBarView: View {
     }
 
     private var mapDataSourceName: String {
-        locationSummary.mapDataSourceName
+        mapDataSourceDetector.source.displayName ?? ""
+    }
+
+    private var mapDataSourceCopyLine: String {
+        guard !mapDataSourceName.isEmpty else { return "地图数据源：Apple / 高德" }
+        return "地图数据源：Apple / 高德（当前：\(mapDataSourceName)）"
     }
 
     @ViewBuilder
@@ -663,7 +667,6 @@ private final class MapLocationSummary: ObservableObject {
     @Published private(set) var formattedAddress = "正在获取 Apple 地图地址"
     @Published private(set) var timeZone: TimeZone?
     @Published private(set) var coordinate: CLLocationCoordinate2D?
-    @Published private(set) var mapDataSourceName = "Apple"
 
     var shortText: String {
         [country, city]
@@ -713,40 +716,34 @@ private final class MapLocationSummary: ObservableObject {
         lookupTask = Task { [weak self] in
             guard let self else { return }
             do {
-                let chinesePlacemark = try await self.geocoder.reverseGeocodeLocation(
-                    location,
+                let isMainlandCoordinate = ChinaCoordinateTransform.usesMainlandChinaOffset(coordinate)
+                let lookupCoordinate = isMainlandCoordinate
+                    ? ChinaCoordinateTransform.mapCoordinateToSystemCoordinate(coordinate)
+                    : coordinate
+                let lookupLocation = CLLocation(
+                    latitude: lookupCoordinate.latitude,
+                    longitude: lookupCoordinate.longitude
+                )
+                let chinesePlacemarks = try await self.geocoder.reverseGeocodeLocation(
+                    lookupLocation,
                     preferredLocale: Locale(identifier: "zh_Hans_CN")
-                ).first
+                )
+                let chinesePlacemark = self.bestPlacemark(in: chinesePlacemarks)
                 guard !Task.isCancelled else { return }
-                let countryCode = chinesePlacemark?.isoCountryCode?.uppercased()
-                self.mapDataSourceName = countryCode == "CN" ? "高德" : "Apple"
-
+                let countryCode = isMainlandCoordinate
+                    ? "CN"
+                    : chinesePlacemark?.isoCountryCode?.uppercased()
                 if countryCode == "CN" {
-                    let systemCoordinate = ChinaCoordinateTransform.mapCoordinateToSystemCoordinate(coordinate)
-                    let systemLocation = CLLocation(
-                        latitude: systemCoordinate.latitude,
-                        longitude: systemCoordinate.longitude
-                    )
-                    let placemark: CLPlacemark?
-                    do {
-                        placemark = try await self.geocoder.reverseGeocodeLocation(
-                            systemLocation,
-                            preferredLocale: Locale(identifier: "zh_Hans_CN")
-                        ).first ?? chinesePlacemark
-                    } catch {
-                        placemark = chinesePlacemark
-                    }
-                    guard !Task.isCancelled else { return }
-                    self.applyChinesePlacemark(placemark, countryCode: "CN")
+                    self.applyChinesePlacemark(chinesePlacemark, countryCode: "CN")
                 } else if countryCode == "TW" {
                     self.applyChinesePlacemark(chinesePlacemark, countryCode: "TW")
                 } else {
                     let englishPlacemark: CLPlacemark?
                     do {
                         englishPlacemark = try await self.geocoder.reverseGeocodeLocation(
-                            location,
+                            lookupLocation,
                             preferredLocale: Locale(identifier: "en_GB")
-                        ).first ?? chinesePlacemark
+                        ).max(by: { self.placemarkScore($0) < self.placemarkScore($1) }) ?? chinesePlacemark
                     } catch {
                         englishPlacemark = chinesePlacemark
                     }
@@ -780,6 +777,9 @@ private final class MapLocationSummary: ObservableObject {
         let street = [placemark?.thoroughfare, placemark?.subThoroughfare]
             .compactMap { nonEmpty($0) }
             .joined()
+        let pointOfInterest = placemark?.areasOfInterest?
+            .compactMap { nonEmpty($0) }
+            .first
         let prefix = isTaiwan ? "中华人民共和国台湾省" : "中国"
         let components = [
             prefix,
@@ -787,7 +787,10 @@ private final class MapLocationSummary: ObservableObject {
             nonEmpty(placemark?.locality),
             nonEmpty(placemark?.subAdministrativeArea),
             nonEmpty(placemark?.subLocality),
-            street.isEmpty ? nonEmpty(placemark?.name) : street
+            street.isEmpty ? nil : street,
+            pointOfInterest,
+            nonEmpty(placemark?.name),
+            nonEmpty(placemark?.postalCode)
         ]
         .compactMap { $0 }
         .reduce(into: [String]()) { result, value in
@@ -797,6 +800,25 @@ private final class MapLocationSummary: ObservableObject {
             result.append(value)
         }
         formattedAddress = components.isEmpty ? "无法获取地址" : components.joined()
+    }
+
+    private func bestPlacemark(in placemarks: [CLPlacemark]) -> CLPlacemark? {
+        placemarks.max { placemarkScore($0) < placemarkScore($1) }
+    }
+
+    private func placemarkScore(_ placemark: CLPlacemark) -> Int {
+        [
+            (placemark.subThoroughfare, 4),
+            (placemark.thoroughfare, 5),
+            (placemark.subLocality, 4),
+            (placemark.locality, 4),
+            (placemark.subAdministrativeArea, 3),
+            (placemark.administrativeArea, 2),
+            (placemark.postalCode, 2),
+            (placemark.name, 2)
+        ].reduce(0) { score, field in
+            score + (nonEmpty(field.0) == nil ? 0 : field.1)
+        }
     }
 
     private func applyForeignPlacemarks(

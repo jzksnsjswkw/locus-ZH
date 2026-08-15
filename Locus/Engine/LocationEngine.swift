@@ -56,24 +56,55 @@ enum LocationEngine {
     private static let locationSet: Int32 = 11
     private static let locationClear: Int32 = 12
 
-    static var isSessionActive: Bool { locationSimulation != nil }
-
-    static func set(latitude: Double, longitude: Double, pairingPath: String, deviceIP: String) -> Result<Void, LocationEngineError> {
-        var result: Result<Void, LocationEngineError> = .failure(.locationSet)
-        queue.sync {
-            let code = setLocked(latitude: latitude, longitude: longitude, pairingPath: pairingPath, deviceIP: deviceIP)
-            result = code == ok ? .success(()) : .failure(.from(code: code))
+    static func isSessionActive() async -> Bool {
+        await withCheckedContinuation { continuation in
+            queue.async {
+                continuation.resume(returning: locationSimulation != nil)
+            }
         }
-        return result
     }
 
-    static func clear() -> Result<Void, LocationEngineError> {
-        var result: Result<Void, LocationEngineError> = .failure(.notActive)
-        queue.sync {
-            let code = clearLocked()
-            result = code == ok ? .success(()) : .failure(.from(code: code))
+    static func set(
+        latitude: Double,
+        longitude: Double,
+        pairingPath: String,
+        deviceIP: String
+    ) async -> Result<Void, LocationEngineError> {
+        await withCheckedContinuation { continuation in
+            queue.async {
+                let code = setLocked(
+                    latitude: latitude,
+                    longitude: longitude,
+                    pairingPath: pairingPath,
+                    deviceIP: deviceIP
+                )
+                let result: Result<Void, LocationEngineError> = code == ok
+                    ? .success(())
+                    : .failure(.from(code: code))
+                continuation.resume(returning: result)
+            }
         }
-        return result
+    }
+
+    static func clear() async -> Result<Void, LocationEngineError> {
+        await withCheckedContinuation { continuation in
+            queue.async {
+                let code = clearLocked()
+                let result: Result<Void, LocationEngineError> = code == ok
+                    ? .success(())
+                    : .failure(.from(code: code))
+                continuation.resume(returning: result)
+            }
+        }
+    }
+
+    static func invalidate() async {
+        await withCheckedContinuation { continuation in
+            queue.async {
+                cleanup()
+                continuation.resume()
+            }
+        }
     }
 
     private static func cleanup() {

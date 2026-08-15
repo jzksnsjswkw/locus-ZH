@@ -58,6 +58,10 @@ struct MapHomeView: View {
     }
 
     var body: some View {
+        presentedMap
+    }
+
+    private var mapSurface: some View {
         ZStack(alignment: .top) {
             // Keep Map inside the safe layout bounds so MapProxy.convert matches
             // finger position. Ignoring the safe area makes the tiles full-bleed but
@@ -205,6 +209,10 @@ struct MapHomeView: View {
             }
 
         }
+    }
+
+    private var mapLifecycle: some View {
+        mapSurface
         .onAppear {
             session.startLocationUpdates()
             if session.restoreLastMapView, let region = session.savedMapRegion() {
@@ -240,6 +248,10 @@ struct MapHomeView: View {
             drawingRouteActive = false
             drawingRoutePointCount = 0
         }
+    }
+
+    private var mapInteractions: some View {
+        mapLifecycle
         .onChange(of: searchPresented) { _, presented in
             if presented {
                 pinSelected = false
@@ -263,6 +275,10 @@ struct MapHomeView: View {
                 clearRoutePresentation()
             }
         }
+    }
+
+    private var mapRouteInteractions: some View {
+        mapInteractions
         .onReceive(NotificationCenter.default.publisher(for: .locusImportGPX)) { note in
             guard let url = note.object as? URL else { return }
             importGPX(url)
@@ -290,6 +306,10 @@ struct MapHomeView: View {
         .onChange(of: simulatedCoordinateKey) { _, _ in
             followSimulatedLocationIfNeeded()
         }
+    }
+
+    private var presentedMap: some View {
+        mapRouteInteractions
         .onReceive(NotificationCenter.default.publisher(for: .locusCancelDrawingRoute)) { _ in
             cancelDrawingRoute()
         }

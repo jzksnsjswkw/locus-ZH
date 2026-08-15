@@ -9,6 +9,8 @@ struct MapHomeView: View {
     @Binding var searchPresented: Bool
     @Binding var showRouteSheet: Bool
     @Binding var generatedRouteReady: Bool
+    @Binding var drawingRouteActive: Bool
+    @Binding var drawingRoutePointCount: Int
 
     @StateObject private var search = PlaceSearchCompleter()
     @Namespace private var rightLowerControlNamespace
@@ -18,6 +20,7 @@ struct MapHomeView: View {
     @State private var routeStart: CLLocationCoordinate2D?
     @State private var routeEnd: CLLocationCoordinate2D?
     @State private var routeCoords: [CLLocationCoordinate2D] = []
+    @State private var routeIsHandDrawn = false
     @State private var routeCameraRevision: UInt = 0
     @State private var visibleRegion: MKCoordinateRegion?
     @State private var edgeZoomStartRegion: MKCoordinateRegion?
@@ -25,12 +28,16 @@ struct MapHomeView: View {
     @State private var showGPXImporter = false
     @State private var drawnPath: [CLLocationCoordinate2D] = []
     @State private var drawMode = false
+    @State private var drawnRouteStart: CLLocationCoordinate2D?
+    @State private var drawnRouteEnd: CLLocationCoordinate2D?
     @State private var pinSelected = false
     @State private var pinExpandedActions = false
     @State private var selectedFavoriteID: String?
     @State private var isDraggingPin = false
     @State private var suppressNextMapTap = false
     @State private var mapLongPressActivated = false
+    @State private var mapLongPressTask: Task<Void, Never>?
+    @State private var mapPressStartPoint: CGPoint?
     @State private var favoriteToast: String?
     @State private var favoriteToastTask: Task<Void, Never>?
     /// Set when the pin comes from search / a named place so starring keeps the title.
@@ -68,12 +75,20 @@ struct MapHomeView: View {
                                     pinExpandedActions = false
                                     selectFavorite(favorite)
                                 },
+                                onLongPress: {
+                                    dismissStatusDetails()
+                                    pinSelected = false
+                                    pinExpandedActions = false
+                                    withAnimation(.spring(response: 0.28, dampingFraction: 0.8)) {
+                                        selectedFavoriteID = favorite.id
+                                    }
+                                },
                                 onRemove: {
                                     removeFavoriteFromMap(favorite)
                                 }
                             )
                             .accessibilityLabel(session.favoriteDisplayName(favorite))
-                            .accessibilityHint("轻点即可切换模拟位置并显示删除按钮")
+                            .accessibilityHint("一秒内松手可切换模拟位置，按住一秒显示删除按钮")
                         }
                     }
 
@@ -157,19 +172,30 @@ struct MapHomeView: View {
                     if routeCoords.count > 1, session.mapStyleIndex == 0 {
                         MapPolyline(coordinates: routeCoords)
                             .stroke(
-                                LocusTheme.accent,
-                                style: StrokeStyle(lineWidth: 5, lineCap: .round, lineJoin: .round)
+                                presentedRouteColor,
+                                style: presentedRouteStrokeStyle
                             )
                     }
-                    if drawnPath.count > 1 {
+                    if drawnPath.count > 1, session.mapStyleIndex == 0 {
                         MapPolyline(coordinates: drawnPath)
                             .stroke(LocusTheme.accentSecondary, style: StrokeStyle(lineWidth: 4, dash: [6, 4]))
+                    }
+                    if let start = drawMode ? drawnPath.first : drawnRouteStart {
+                        Annotation("手绘轨迹起点", coordinate: start) {
+                            RouteEndpointMarker(color: .green, systemImage: "play.fill")
+                        }
+                    }
+                    if !drawMode, let end = drawnRouteEnd {
+                        Annotation("手绘轨迹终点", coordinate: end) {
+                            RouteEndpointMarker(color: .red, systemImage: "stop.fill")
+                        }
                     }
                 }
                 .mapStyle(mapStyle)
                 .mapControlVisibility(.hidden)
                 .onMapCameraChange(frequency: .continuous) { _ in
-                    guard session.mapStyleIndex != 0, routeCoords.count > 1 else { return }
+                    guard session.mapStyleIndex != 0,
+                          routeCoords.count > 1 || drawnPath.count > 1 else { return }
                     routeCameraRevision &+= 1
                 }
                 .onMapCameraChange(frequency: .onEnd) { context in
@@ -187,12 +213,32 @@ struct MapHomeView: View {
                 }
                 .simultaneousGesture(mapLongPressGesture(proxy: proxy))
                 .overlay {
-                    if routeCoords.count > 1, session.mapStyleIndex != 0 {
-                        ScreenFixedRouteOverlay(
-                            coordinates: routeCoords,
-                            proxy: proxy,
-                            cameraRevision: routeCameraRevision
-                        )
+                    if session.mapStyleIndex != 0 {
+                        ZStack {
+                            if routeCoords.count > 1 {
+                                ScreenFixedRouteOverlay(
+                                    coordinates: routeCoords,
+                                    proxy: proxy,
+                                    cameraRevision: routeCameraRevision,
+                                    color: presentedRouteColor,
+                                    strokeStyle: presentedRouteStrokeStyle
+                                )
+                            }
+                            if drawnPath.count > 1 {
+                                ScreenFixedRouteOverlay(
+                                    coordinates: drawnPath,
+                                    proxy: proxy,
+                                    cameraRevision: routeCameraRevision,
+                                    color: LocusTheme.accentSecondary,
+                                    strokeStyle: StrokeStyle(
+                                        lineWidth: 4,
+                                        lineCap: .round,
+                                        lineJoin: .round,
+                                        dash: [6, 4]
+                                    )
+                                )
+                            }
+                        }
                     }
                 }
             }
@@ -251,11 +297,22 @@ struct MapHomeView: View {
         .onChange(of: routeReadyState, initial: true) { _, ready in
             generatedRouteReady = ready
         }
+        .onChange(of: drawMode, initial: true) { _, active in
+            drawingRouteActive = active
+        }
+        .onChange(of: drawnPath.count, initial: true) { _, count in
+            drawingRoutePointCount = count
+        }
         .onDisappear {
+            mapLongPressTask?.cancel()
+            mapLongPressTask = nil
+            mapPressStartPoint = nil
             favoriteToastTask?.cancel()
             favoriteToastTask = nil
             favoriteToast = nil
             generatedRouteReady = false
+            drawingRouteActive = false
+            drawingRoutePointCount = 0
         }
         .onChange(of: searchPresented) { _, presented in
             if presented {
@@ -290,6 +347,15 @@ struct MapHomeView: View {
         .onReceive(NotificationCenter.default.publisher(for: .locusRunRoute)) { _ in
             runGeneratedRoute()
         }
+        .onReceive(NotificationCenter.default.publisher(for: .locusCancelDrawingRoute)) { _ in
+            cancelDrawingRoute()
+        }
+        .onReceive(NotificationCenter.default.publisher(for: .locusUndoDrawingPoint)) { _ in
+            undoDrawingPoint()
+        }
+        .onReceive(NotificationCenter.default.publisher(for: .locusSaveDrawingRoute)) { _ in
+            saveDrawingRoute()
+        }
         .fileImporter(isPresented: $showGPXImporter, allowedContentTypes: [.xml, .data], allowsMultipleSelection: false) { result in
             if case .success(let urls) = result, let url = urls.first {
                 importGPX(url)
@@ -301,14 +367,10 @@ struct MapHomeView: View {
                 onImportGPX: { showGPXImporter = true },
                 onExportGPX: exportGPX,
                 drawMode: drawMode,
-                hasDrawnPath: drawnPath.count > 1,
                 onToggleDrawing: {
-                    drawMode.toggle()
-                },
-                onUseDrawn: {
-                    routeCoords = RouteBuilder.sample(coordinates: drawnPath, every: 10)
-                    drawnPath.removeAll()
-                    drawMode = false
+                    if !drawMode {
+                        beginDrawingRoute()
+                    }
                 }
             )
             .presentationDetents([.medium, .large])
@@ -358,22 +420,39 @@ struct MapHomeView: View {
     }
 
     private func mapLongPressGesture(proxy: MapProxy) -> some Gesture {
-        LongPressGesture(minimumDuration: 1.0)
-            .sequenced(before: DragGesture(minimumDistance: 0, coordinateSpace: .local))
+        DragGesture(minimumDistance: 0, coordinateSpace: .local)
             .onChanged { value in
-                guard case .second(true, let drag) = value,
-                      !mapLongPressActivated,
-                      let drag else { return }
-                mapLongPressActivated = true
-                dismissStatusDetails()
-                placeExpandedPin(at: drag.startLocation, proxy: proxy)
+                if mapPressStartPoint == nil {
+                    let startPoint = value.startLocation
+                    mapPressStartPoint = startPoint
+                    mapLongPressTask?.cancel()
+                    mapLongPressTask = Task { @MainActor in
+                        try? await Task.sleep(for: .seconds(1))
+                        guard !Task.isCancelled,
+                              mapPressStartPoint != nil,
+                              !mapLongPressActivated else { return }
+                        mapLongPressActivated = true
+                        dismissStatusDetails()
+                        placeExpandedPin(at: startPoint, proxy: proxy)
+                    }
+                }
+
+                let movement = max(abs(value.translation.width), abs(value.translation.height))
+                if movement > 12, !mapLongPressActivated {
+                    mapLongPressTask?.cancel()
+                    mapLongPressTask = nil
+                }
             }
             .onEnded { _ in
-                guard mapLongPressActivated else { return }
-                suppressNextMapTap = true
-                mapLongPressActivated = false
-                DispatchQueue.main.asyncAfter(deadline: .now() + 0.25) {
-                    suppressNextMapTap = false
+                mapLongPressTask?.cancel()
+                mapLongPressTask = nil
+                mapPressStartPoint = nil
+                if mapLongPressActivated {
+                    suppressNextMapTap = true
+                    mapLongPressActivated = false
+                    DispatchQueue.main.asyncAfter(deadline: .now() + 0.25) {
+                        suppressNextMapTap = false
+                    }
                 }
             }
     }
@@ -603,7 +682,17 @@ struct MapHomeView: View {
     }
 
     private var routeReadyState: Bool {
-        routeCoords.count > 1 && !session.routeActive && !session.routePaused
+        routeCoords.count > 1 && !drawMode && !session.routeActive && !session.routePaused
+    }
+
+    private var presentedRouteColor: Color {
+        routeIsHandDrawn ? LocusTheme.accentSecondary : LocusTheme.accent
+    }
+
+    private var presentedRouteStrokeStyle: StrokeStyle {
+        routeIsHandDrawn
+            ? StrokeStyle(lineWidth: 4, lineCap: .round, lineJoin: .round, dash: [6, 4])
+            : StrokeStyle(lineWidth: 5, lineCap: .round, lineJoin: .round)
     }
 
     private var currentPinIsFavorite: Bool {
@@ -827,6 +916,11 @@ struct MapHomeView: View {
             do {
                 let coords = try await RouteBuilder.roadRoute(from: start, to: end, mode: session.travelMode)
                 await MainActor.run {
+                    drawnPath.removeAll()
+                    drawnRouteStart = nil
+                    drawnRouteEnd = nil
+                    drawMode = false
+                    routeIsHandDrawn = false
                     routeCoords = coords
                     isRouting = false
                     UINotificationFeedbackGenerator().notificationOccurred(.success)
@@ -842,7 +936,7 @@ struct MapHomeView: View {
     }
 
     private func playRoute() {
-        let path = routeCoords.isEmpty ? drawnPath : routeCoords
+        let path = routeCoords
         guard path.count >= 2 else {
             session.lastError = "请先规划、手绘或导入一条轨迹。"
             return
@@ -872,13 +966,70 @@ struct MapHomeView: View {
         session.discardRoute()
         routeCoords.removeAll()
         drawnPath.removeAll()
+        drawnRouteStart = nil
+        drawnRouteEnd = nil
+        drawMode = false
+        routeIsHandDrawn = false
         routeStart = nil
         routeEnd = nil
+    }
+
+    private func beginDrawingRoute() {
+        session.discardRoute()
+        routeCoords.removeAll()
+        drawnPath.removeAll()
+        drawnRouteStart = nil
+        drawnRouteEnd = nil
+        routeIsHandDrawn = false
+        routeStart = nil
+        routeEnd = nil
+        drawMode = true
+        closePinActions()
+        UIImpactFeedbackGenerator(style: .light).impactOccurred()
+        showFavoriteToast("已开始手绘轨迹")
+    }
+
+    private func cancelDrawingRoute() {
+        guard drawMode else { return }
+        drawnPath.removeAll()
+        drawnRouteStart = nil
+        drawnRouteEnd = nil
+        drawMode = false
+        UIImpactFeedbackGenerator(style: .light).impactOccurred()
+        showFavoriteToast("已取消手绘")
+    }
+
+    private func undoDrawingPoint() {
+        guard drawMode, !drawnPath.isEmpty else { return }
+        drawnPath.removeLast()
+        UISelectionFeedbackGenerator().selectionChanged()
+    }
+
+    private func saveDrawingRoute() {
+        guard drawMode, drawnPath.count > 1,
+              let start = drawnPath.first,
+              let end = drawnPath.last else {
+            session.lastError = "请至少绘制两个点后再保存。"
+            return
+        }
+        drawnRouteStart = start
+        drawnRouteEnd = end
+        routeIsHandDrawn = true
+        routeCoords = RouteBuilder.sample(coordinates: drawnPath, every: 10)
+        drawnPath.removeAll()
+        drawMode = false
+        UINotificationFeedbackGenerator().notificationOccurred(.success)
+        showFavoriteToast("手绘轨迹已保存")
     }
 
     private func importGPX(_ url: URL) {
         do {
             let coords = try GPXCodec.parse(url)
+            drawnPath.removeAll()
+            drawnRouteStart = nil
+            drawnRouteEnd = nil
+            drawMode = false
+            routeIsHandDrawn = false
             routeCoords = RouteBuilder.sample(coordinates: coords, every: 10)
             if let first = coords.first {
                 session.pin = first
@@ -965,12 +1116,20 @@ private struct EdgeMapZoomGesture: View {
 private struct FavoriteMapMarker: View {
     var selected: Bool
     var onSelect: () -> Void
+    var onLongPress: () -> Void
     var onRemove: () -> Void
-    @GestureState private var isPressing = false
+    @State private var isPressing = false
+    @State private var longPressActivated = false
+    @State private var longPressTask: Task<Void, Never>?
+    @State private var pressStarted = false
+    @State private var pressCancelled = false
 
     var body: some View {
         ZStack(alignment: .bottom) {
-            Button(action: onSelect) {
+            Button {
+                guard !longPressActivated, !pressCancelled else { return }
+                onSelect()
+            } label: {
                 Image(systemName: "star.fill")
                     .font(.title3.weight(.bold))
                     .foregroundStyle(.yellow)
@@ -980,11 +1139,7 @@ private struct FavoriteMapMarker: View {
                     .contentShape(Rectangle())
             }
             .buttonStyle(.plain)
-            .simultaneousGesture(pressFeedbackGesture)
-            .onChange(of: isPressing) { _, pressing in
-                guard pressing else { return }
-                UIImpactFeedbackGenerator(style: .soft).impactOccurred()
-            }
+            .simultaneousGesture(favoritePressGesture)
 
             if selected {
                 Button(action: onRemove) {
@@ -1007,13 +1162,72 @@ private struct FavoriteMapMarker: View {
         .frame(width: 160, height: 92, alignment: .bottom)
         .animation(.spring(response: 0.28, dampingFraction: 0.8), value: selected)
         .animation(.easeOut(duration: 0.12), value: isPressing)
+        .onDisappear {
+            longPressTask?.cancel()
+            longPressTask = nil
+        }
     }
 
-    private var pressFeedbackGesture: some Gesture {
+    private var favoritePressGesture: some Gesture {
         DragGesture(minimumDistance: 0)
-            .updating($isPressing) { _, pressing, _ in
-                pressing = true
+            .onChanged { value in
+                if !pressStarted {
+                    pressStarted = true
+                    pressCancelled = false
+                    isPressing = true
+                    longPressTask?.cancel()
+                    longPressTask = Task { @MainActor in
+                        try? await Task.sleep(for: .seconds(1))
+                        guard !Task.isCancelled, pressStarted, !longPressActivated else { return }
+                        longPressActivated = true
+                        UIImpactFeedbackGenerator(style: .medium).impactOccurred()
+                        onLongPress()
+                    }
+                }
+
+                let movement = max(abs(value.translation.width), abs(value.translation.height))
+                if movement > 12, !longPressActivated {
+                    longPressTask?.cancel()
+                    longPressTask = nil
+                    pressCancelled = true
+                    isPressing = false
+                }
             }
+            .onEnded { _ in
+                longPressTask?.cancel()
+                longPressTask = nil
+                pressStarted = false
+                isPressing = false
+                if longPressActivated {
+                    DispatchQueue.main.asyncAfter(deadline: .now() + 0.25) {
+                        longPressActivated = false
+                        pressCancelled = false
+                    }
+                } else if pressCancelled {
+                    DispatchQueue.main.asyncAfter(deadline: .now() + 0.25) {
+                        pressCancelled = false
+                    }
+                }
+            }
+    }
+}
+
+private struct RouteEndpointMarker: View {
+    let color: Color
+    let systemImage: String
+
+    var body: some View {
+        ZStack {
+            Circle()
+                .fill(color)
+            Image(systemName: systemImage)
+                .font(.caption2.weight(.bold))
+                .foregroundStyle(.white)
+        }
+        .frame(width: 24, height: 24)
+        .overlay(Circle().stroke(.white, lineWidth: 2))
+        .shadow(color: .black.opacity(0.35), radius: 2, y: 1)
+        .accessibilityHidden(true)
     }
 }
 
@@ -1021,6 +1235,8 @@ private struct ScreenFixedRouteOverlay: View {
     let coordinates: [CLLocationCoordinate2D]
     let proxy: MapProxy
     let cameraRevision: UInt
+    let color: Color
+    let strokeStyle: StrokeStyle
 
     var body: some View {
         Canvas { context, _ in
@@ -1061,8 +1277,8 @@ private struct ScreenFixedRouteOverlay: View {
 
             context.stroke(
                 path,
-                with: .color(LocusTheme.accent),
-                style: StrokeStyle(lineWidth: 5, lineCap: .round, lineJoin: .round)
+                with: .color(color),
+                style: strokeStyle
             )
         }
         .allowsHitTesting(false)

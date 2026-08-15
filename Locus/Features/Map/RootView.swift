@@ -24,6 +24,8 @@ struct RootView: View {
     @State private var searchPresented = false
     @State private var showRouteSheet = false
     @State private var generatedRouteReady = false
+    @State private var drawingRouteActive = false
+    @State private var drawingRoutePointCount = 0
 
     var body: some View {
         // Bottom chrome is a sibling overlay aligned to the bottom — no full-screen
@@ -34,7 +36,9 @@ struct RootView: View {
                 favoriteRenameSuggestion: $favoriteRenameSuggestion,
                 searchPresented: $searchPresented,
                 showRouteSheet: $showRouteSheet,
-                generatedRouteReady: $generatedRouteReady
+                generatedRouteReady: $generatedRouteReady,
+                drawingRouteActive: $drawingRouteActive,
+                drawingRoutePointCount: $drawingRoutePointCount
             )
 
             VStack(spacing: 10) {
@@ -47,7 +51,11 @@ struct RootView: View {
                 if !searchPresented {
                     HStack(alignment: .bottom, spacing: MapChromeLayout.spacing) {
                         VStack(spacing: MapChromeLayout.spacing) {
-                            if generatedRouteReady {
+                            if drawingRouteActive {
+                                drawingRouteControls
+                                    .frame(maxWidth: .infinity, alignment: .center)
+                                    .transition(.move(edge: .bottom).combined(with: .opacity))
+                            } else if generatedRouteReady {
                                 generatedRouteControls
                                     .frame(maxWidth: .infinity, alignment: .center)
                                     .transition(.move(edge: .bottom).combined(with: .opacity))
@@ -117,6 +125,7 @@ struct RootView: View {
         }
         .animation(.spring(response: 0.32, dampingFraction: 0.84), value: searchPresented)
         .animation(.spring(response: 0.32, dampingFraction: 0.84), value: generatedRouteReady)
+        .animation(.spring(response: 0.32, dampingFraction: 0.84), value: drawingRouteActive)
     }
 
     private var bottomSearchButton: some View {
@@ -203,6 +212,56 @@ struct RootView: View {
         .frame(width: 224, height: 50)
         .locusGlass(.regular, in: Capsule())
         .contentShape(Capsule())
+    }
+
+    private var drawingRouteControls: some View {
+        HStack(spacing: 0) {
+            drawingActionButton("取消", systemImage: "xmark", color: LocusTheme.danger) {
+                NotificationCenter.default.post(name: .locusCancelDrawingRoute, object: nil)
+            }
+
+            Divider()
+                .overlay(Color.white.opacity(0.25))
+                .frame(height: 28)
+
+            drawingActionButton("撤回", systemImage: "arrow.uturn.backward", color: .orange) {
+                NotificationCenter.default.post(name: .locusUndoDrawingPoint, object: nil)
+            }
+            .disabled(drawingRoutePointCount == 0)
+
+            Divider()
+                .overlay(Color.white.opacity(0.25))
+                .frame(height: 28)
+
+            drawingActionButton("保存", systemImage: "checkmark", color: .blue) {
+                NotificationCenter.default.post(name: .locusSaveDrawingRoute, object: nil)
+            }
+            .disabled(drawingRoutePointCount < 2)
+        }
+        .font(.caption.weight(.bold))
+        .buttonStyle(.plain)
+        .padding(.horizontal, 4)
+        .frame(maxWidth: 320)
+        .frame(height: 50)
+        .locusGlass(.regular, in: Capsule())
+        .contentShape(Capsule())
+    }
+
+    private func drawingActionButton(
+        _ title: String,
+        systemImage: String,
+        color: Color,
+        action: @escaping () -> Void
+    ) -> some View {
+        Button {
+            dismissStatusDetails()
+            action()
+        } label: {
+            Label(title, systemImage: systemImage)
+                .foregroundStyle(color)
+                .frame(maxWidth: .infinity, minHeight: 42)
+                .contentShape(Rectangle())
+        }
     }
 }
 
@@ -618,7 +677,7 @@ struct BottomControlsView: View {
                                 Text(String(format: "%.2fx · %.1f km/h", session.speedMultiplier, session.travelMode.baseSpeed * session.speedMultiplier * 3.6))
                                     .font(.subheadline.bold())
                                     .monospacedDigit()
-                                Text("第 \(max(1, session.routeLap)) 圈 · \(Int(session.routeProgress * 100))%")
+                                Text(routeProgressText)
                                     .font(.caption.monospacedDigit())
                                     .foregroundStyle(.secondary)
                             }
@@ -635,6 +694,8 @@ struct BottomControlsView: View {
 
                         ProgressView(value: session.routeProgress)
                             .tint(LocusTheme.accent)
+
+                        routeRuntimeOptions
                     }
                     .padding(.horizontal, 4)
                 }
@@ -660,6 +721,95 @@ struct BottomControlsView: View {
             NotificationCenter.default.post(name: .locusDismissStatusDetails, object: nil)
         })
         .animation(.easeOut(duration: 0.18), value: session.joystickActive)
+    }
+
+    private var routeRuntimeOptions: some View {
+        VStack(spacing: 8) {
+            HStack(spacing: 6) {
+                ForEach(TravelMode.allCases) { mode in
+                    routeModeButton(mode)
+                }
+            }
+
+            HStack(spacing: 10) {
+                Toggle(isOn: $session.routeLoopEnabled) {
+                    Label("循环", systemImage: "repeat")
+                        .font(.caption.weight(.semibold))
+                }
+                .toggleStyle(.switch)
+
+                Spacer(minLength: 0)
+                loopCountControl
+            }
+        }
+    }
+
+    private func routeModeButton(_ mode: TravelMode) -> some View {
+        let selected = session.travelMode == mode
+        return Button {
+            session.travelMode = mode
+            session.speedMultiplier = 1.0
+            UISelectionFeedbackGenerator().selectionChanged()
+        } label: {
+            VStack(spacing: 2) {
+                Image(systemName: mode.icon)
+                    .font(.subheadline.weight(.semibold))
+                Text(mode.title)
+                    .font(.caption2.weight(.semibold))
+            }
+            .foregroundStyle(selected ? .black : .primary)
+            .frame(maxWidth: .infinity)
+            .frame(height: 40)
+            .background(Capsule().fill(selected ? LocusTheme.accent : Color.primary.opacity(0.08)))
+            .contentShape(Capsule())
+        }
+        .buttonStyle(.plain)
+        .accessibilityLabel("交通方式：\(mode.title)")
+        .accessibilityValue(selected ? "已选择" : "未选择")
+    }
+
+    private var routeProgressText: String {
+        let lap = max(1, session.routeLap)
+        let progress = Int(session.routeProgress * 100)
+        if session.routeLoopEnabled {
+            return "第 \(lap)/\(session.routeLoopCount) 圈 · \(progress)%"
+        }
+        return "第 \(lap) 圈 · \(progress)%"
+    }
+
+    private var loopCountControl: some View {
+        HStack(spacing: 0) {
+            Button {
+                session.routeLoopCount = max(minimumLoopCount, session.routeLoopCount - 1)
+            } label: {
+                Image(systemName: "minus")
+                    .frame(width: 32, height: 30)
+            }
+            .disabled(!session.routeLoopEnabled || session.routeLoopCount <= minimumLoopCount)
+
+            Text("共 \(session.routeLoopCount) 圈")
+                .font(.caption.monospacedDigit().weight(.semibold))
+                .frame(minWidth: 58)
+
+            Button {
+                session.routeLoopCount = min(99, session.routeLoopCount + 1)
+            } label: {
+                Image(systemName: "plus")
+                    .frame(width: 32, height: 30)
+            }
+            .disabled(!session.routeLoopEnabled || session.routeLoopCount >= 99)
+        }
+        .buttonStyle(.plain)
+        .foregroundStyle(session.routeLoopEnabled ? Color.primary : Color.secondary)
+        .background(Capsule().fill(Color.primary.opacity(0.08)))
+        .contentShape(Capsule())
+        .opacity(session.routeLoopEnabled ? 1 : 0.55)
+        .accessibilityElement(children: .combine)
+        .accessibilityLabel("循环次数，共 \(session.routeLoopCount) 圈")
+    }
+
+    private var minimumLoopCount: Int {
+        max(2, session.routeLap)
     }
 
     private var routeButton: some View {

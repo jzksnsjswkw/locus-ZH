@@ -24,13 +24,6 @@ struct SettingsView: View {
         return build.isEmpty ? short : "\(short) (\(build))"
     }
 
-    private var displayedCoordinate: String {
-        guard let coordinate = session.simulated ?? session.pin ?? session.realMapCoordinate else {
-            return "暂无坐标"
-        }
-        return String(format: "%.4f, %.4f", coordinate.latitude, coordinate.longitude)
-    }
-
     var body: some View {
         NavigationStack {
             List {
@@ -132,20 +125,6 @@ struct SettingsView: View {
                     .listRowBackground(Color.clear)
                     .listRowSeparator(.hidden)
                 }
-            }
-            .safeAreaInset(edge: .top, spacing: 0) {
-                HStack {
-                    Spacer(minLength: 0)
-                    Text(displayedCoordinate)
-                        .font(.caption2.monospacedDigit())
-                        .foregroundStyle(.secondary)
-                        .lineLimit(1)
-                        .padding(.horizontal, 10)
-                        .padding(.vertical, 5)
-                        .background(.thinMaterial, in: Capsule())
-                }
-                .padding(.horizontal, 16)
-                .padding(.top, 4)
             }
             .navigationTitle("设置")
             .toolbar {

@@ -90,6 +90,7 @@ final class SpoofSession: ObservableObject {
     @Published var routeLoopEnabled = false {
         didSet { UserDefaults.standard.set(routeLoopEnabled, forKey: "locus.routeLoopEnabled") }
     }
+    @Published var routeLoopCount = 2
 
     @Published var favorites: [SavedPlace] = []
     @Published var recents: [SavedPlace] = []
@@ -280,7 +281,6 @@ final class SpoofSession: ObservableObject {
         routeActive = true
         routePaused = false
         if !preserveOriginalRoute { activeRoute = coordinates }
-        let mode = travelMode
         routeTask = Task { [weak self] in
             guard let self else { return }
             var firstPass = true
@@ -297,7 +297,7 @@ final class SpoofSession: ObservableObject {
                 for (segmentIndex, next) in coordinates.dropFirst().enumerated() {
                     if Task.isCancelled { break }
                     let distance = Self.distance(from: previous, to: next)
-                    var speed = mode.baseSpeed * self.speedMultiplier * Double.random(in: 0.88...1.12)
+                    var speed = self.travelMode.baseSpeed * self.speedMultiplier * Double.random(in: 0.88...1.12)
                     speed = max(0.2, speed)
                     let stepMeters: CLLocationDistance = min(12, max(1, speed * 0.5))
                     let steps = max(1, Int(ceil(distance / stepMeters)))
@@ -308,7 +308,7 @@ final class SpoofSession: ObservableObject {
                             latitude: previous.latitude + (next.latitude - previous.latitude) * t,
                             longitude: previous.longitude + (next.longitude - previous.longitude) * t
                         )
-                        speed = max(0.2, mode.baseSpeed * self.speedMultiplier * Double.random(in: 0.94...1.06))
+                        speed = max(0.2, self.travelMode.baseSpeed * self.speedMultiplier * Double.random(in: 0.94...1.06))
                         let delay = max(0.05, stepMeters / speed)
                         try? await Task.sleep(nanoseconds: UInt64(delay * 1_000_000_000))
                         if Task.isCancelled { break }
@@ -320,8 +320,10 @@ final class SpoofSession: ObservableObject {
                     }
                     previous = next
                 }
-                if self.routeLoopEnabled { self.routeProgress = 0 }
-            } while self.routeLoopEnabled && !Task.isCancelled
+                if self.routeLoopEnabled && lap < self.routeLoopCount {
+                    self.routeProgress = 0
+                }
+            } while self.routeLoopEnabled && lap < self.routeLoopCount && !Task.isCancelled
             guard self.routeGeneration == generation else { return }
             self.routeTask = nil
             self.routeActive = false

@@ -18,7 +18,8 @@ struct MapDropPin: View {
     @State private var draggingFromLongPress = false
     @State private var longPressActivated = false
     @State private var suppressTapAfterLongPress = false
-    @GestureState private var isPressing = false
+    @State private var isPressing = false
+    @State private var pressFeedbackSent = false
 
     var body: some View {
         ZStack(alignment: .bottom) {
@@ -43,12 +44,13 @@ struct MapDropPin: View {
                         }
                     }
                 }
-                .gesture(dragGesture)
-                .simultaneousGesture(pressFeedbackGesture)
-                .onChange(of: isPressing) { _, pressing in
-                    guard pressing else { return }
-                    UIImpactFeedbackGenerator(style: .soft).impactOccurred()
-                }
+                .onLongPressGesture(
+                    minimumDuration: 1.0,
+                    maximumDistance: 20,
+                    pressing: handlePressing,
+                    perform: activateLongPress
+                )
+                .simultaneousGesture(dragGesture)
 
             if selected && !isDragging {
                 pinActionMenu
@@ -95,35 +97,20 @@ struct MapDropPin: View {
     }
 
     private var dragGesture: some Gesture {
-        LongPressGesture(minimumDuration: 1.0)
-            .sequenced(before: DragGesture(minimumDistance: 0, coordinateSpace: .global))
+        DragGesture(minimumDistance: 0, coordinateSpace: .global)
             .onChanged { value in
-                switch value {
-                case .first(true):
-                    break
-                case .second(true, let drag):
-                    if !longPressActivated {
-                        longPressActivated = true
-                        suppressTapAfterLongPress = true
-                        UIImpactFeedbackGenerator(style: .medium).impactOccurred()
-                        onShowExpandedActions()
-                    }
-                    if let drag {
-                        let distance = max(abs(drag.translation.width), abs(drag.translation.height))
-                        guard distance >= 8 else { break }
-                        if !draggingFromLongPress {
-                            draggingFromLongPress = true
-                            onDragBegan()
-                        }
-                        onDragMoved(drag.location)
-                    }
-                default:
-                    break
+                guard longPressActivated else { return }
+                let distance = max(abs(value.translation.width), abs(value.translation.height))
+                guard distance >= 8 else { return }
+                if !draggingFromLongPress {
+                    draggingFromLongPress = true
+                    onDragBegan()
                 }
+                onDragMoved(value.location)
             }
-            .onEnded { value in
+            .onEnded { _ in
                 let wasActivated = longPressActivated
-                if case .second(true, _) = value, draggingFromLongPress {
+                if draggingFromLongPress {
                     onDragEnded()
                 }
                 if wasActivated {
@@ -136,11 +123,22 @@ struct MapDropPin: View {
             }
     }
 
-    private var pressFeedbackGesture: some Gesture {
-        DragGesture(minimumDistance: 0)
-            .updating($isPressing) { _, pressing, _ in
-                pressing = true
-            }
+    private func handlePressing(_ pressing: Bool) {
+        isPressing = pressing
+        if pressing, !pressFeedbackSent {
+            pressFeedbackSent = true
+            UIImpactFeedbackGenerator(style: .soft).impactOccurred()
+        } else if !pressing {
+            pressFeedbackSent = false
+        }
+    }
+
+    private func activateLongPress() {
+        guard !longPressActivated else { return }
+        longPressActivated = true
+        suppressTapAfterLongPress = true
+        UIImpactFeedbackGenerator(style: .medium).impactOccurred()
+        onShowExpandedActions()
     }
 }
 

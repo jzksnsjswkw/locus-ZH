@@ -1748,40 +1748,61 @@ struct LocusMapView: UIViewRepresentable {
             context.coordinator.spoofAnnotation = nil
         }
 
-        // Selected / presented route polyline.
-        if routeCoords.count > 1 {
-            if let overlay = context.coordinator.routeOverlay { mapView.removeOverlay(overlay) }
-            let polyline = MKPolyline(coordinates: routeCoords, count: routeCoords.count)
-            // Assign before addOverlay: MapKit may call rendererFor synchronously
-            // from within addOverlay, and rendererFor dispatches on identity.
-            context.coordinator.routeOverlay = polyline
-            mapView.addOverlay(polyline)
-        } else if let overlay = context.coordinator.routeOverlay {
-            mapView.removeOverlay(overlay)
-            context.coordinator.routeOverlay = nil
-        }
+        // Rebuilding overlays is expensive (hundreds of points, add/remove
+        // churn on the renderer), and updateUIView fires on every body change
+        // (status updates, region settles...). Only rebuild when the route
+        // data actually changed; otherwise taps feel laggy while the main
+        // thread churns through polyline construction.
+        let routeKey = Self.coordinatesKey(routeCoords)
+        let alternativesKey = alternativeRouteCoords.map(Self.coordinatesKey)
+        let drawnKey = Self.coordinatesKey(drawnPath)
+        if routeKey != context.coordinator.routeKey
+            || alternativesKey != context.coordinator.alternativesKey
+            || drawnKey != context.coordinator.drawnKey {
+            context.coordinator.routeKey = routeKey
+            context.coordinator.alternativesKey = alternativesKey
+            context.coordinator.drawnKey = drawnKey
 
-        // Alternative route polylines (unselected options).
-        for overlay in context.coordinator.alternativeOverlays {
-            mapView.removeOverlay(overlay)
-        }
-        context.coordinator.alternativeOverlays.removeAll()
-        for coords in alternativeRouteCoords where coords.count > 1 {
-            let polyline = MKPolyline(coordinates: coords, count: coords.count)
-            context.coordinator.alternativeOverlays.append(polyline)
-            mapView.addOverlay(polyline)
-        }
+            // Selected / presented route polyline.
+            if routeCoords.count > 1 {
+                if let overlay = context.coordinator.routeOverlay { mapView.removeOverlay(overlay) }
+                let polyline = MKPolyline(coordinates: routeCoords, count: routeCoords.count)
+                // Assign before addOverlay: MapKit may call rendererFor synchronously
+                // from within addOverlay, and rendererFor dispatches on identity.
+                context.coordinator.routeOverlay = polyline
+                mapView.addOverlay(polyline)
+            } else if let overlay = context.coordinator.routeOverlay {
+                mapView.removeOverlay(overlay)
+                context.coordinator.routeOverlay = nil
+            }
 
-        // Drawn path polyline (dashed).
-        if drawnPath.count > 1 {
-            if let overlay = context.coordinator.drawnOverlay { mapView.removeOverlay(overlay) }
-            let polyline = MKPolyline(coordinates: drawnPath, count: drawnPath.count)
-            context.coordinator.drawnOverlay = polyline
-            mapView.addOverlay(polyline)
-        } else if let overlay = context.coordinator.drawnOverlay {
-            mapView.removeOverlay(overlay)
-            context.coordinator.drawnOverlay = nil
+            // Alternative route polylines (unselected options).
+            for overlay in context.coordinator.alternativeOverlays {
+                mapView.removeOverlay(overlay)
+            }
+            context.coordinator.alternativeOverlays.removeAll()
+            for coords in alternativeRouteCoords where coords.count > 1 {
+                let polyline = MKPolyline(coordinates: coords, count: coords.count)
+                context.coordinator.alternativeOverlays.append(polyline)
+                mapView.addOverlay(polyline)
+            }
+
+            // Drawn path polyline (dashed).
+            if drawnPath.count > 1 {
+                if let overlay = context.coordinator.drawnOverlay { mapView.removeOverlay(overlay) }
+                let polyline = MKPolyline(coordinates: drawnPath, count: drawnPath.count)
+                context.coordinator.drawnOverlay = polyline
+                mapView.addOverlay(polyline)
+            } else if let overlay = context.coordinator.drawnOverlay {
+                mapView.removeOverlay(overlay)
+                context.coordinator.drawnOverlay = nil
+            }
         }
+    }
+
+    private static func coordinatesKey(_ coords: [CLLocationCoordinate2D]) -> String {
+        guard let first = coords.first, let last = coords.last else { return "\(coords.count)" }
+        return "\(coords.count):\(first.latitude),\(first.longitude)-\(last.latitude),\(last.longitude)"
     }
 
     private static func disableTouchCancellation(in view: UIView) {
@@ -1828,6 +1849,9 @@ struct LocusMapView: UIViewRepresentable {
         var routeOverlay: MKPolyline?
         var alternativeOverlays: [MKPolyline] = []
         var drawnOverlay: MKPolyline?
+        var routeKey: String?
+        var alternativesKey: [String]?
+        var drawnKey: String?
         var touchGate: MapTouchGate?
         var onRegionSettled: (() -> Void)?
 

@@ -200,7 +200,7 @@ struct RootView: View {
             } label: {
                 Label("删除", systemImage: "trash.fill")
                     .foregroundStyle(LocusTheme.danger)
-                    .frame(maxWidth: .infinity, minHeight: 42)
+                    .frame(maxWidth: .infinity, maxHeight: .infinity)
                     .contentShape(Rectangle())
             }
 
@@ -214,7 +214,7 @@ struct RootView: View {
             } label: {
                 Label("运行", systemImage: "play.fill")
                     .foregroundStyle(.blue)
-                    .frame(maxWidth: .infinity, minHeight: 42)
+                    .frame(maxWidth: .infinity, maxHeight: .infinity)
                     .contentShape(Rectangle())
             }
         }
@@ -244,8 +244,7 @@ struct RootView: View {
                             .minimumScaleFactor(0.7)
                     }
                     .foregroundStyle(selectedRouteOptionID == option.id ? Color.white : Color.primary)
-                    .frame(maxWidth: .infinity)
-                    .frame(height: 40)
+                    .frame(maxWidth: .infinity, maxHeight: .infinity)
                     .background(
                         Capsule().fill(
                             selectedRouteOptionID == option.id
@@ -256,10 +255,12 @@ struct RootView: View {
                     .contentShape(Capsule())
                 }
                 .buttonStyle(.plain)
+                .frame(maxHeight: .infinity)
             }
         }
         .padding(4)
         .frame(maxWidth: 320)
+        .frame(height: 50)
         .locusGlass(.regular, in: Capsule())
         .contentShape(Capsule())
     }

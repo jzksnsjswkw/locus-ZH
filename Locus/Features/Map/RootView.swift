@@ -61,14 +61,17 @@ struct RootView: View {
                                 drawingRouteControls
                                     .frame(maxWidth: .infinity, alignment: .center)
                                     .transition(.move(edge: .bottom).combined(with: .opacity))
+                                    .zIndex(10)
                             } else if generatedRouteReady {
                                 generatedRouteControls
                                     .frame(maxWidth: .infinity, alignment: .center)
                                     .transition(.move(edge: .bottom).combined(with: .opacity))
+                                    .zIndex(10)
                                 if routeOptions.count > 1 {
                                     routeChoiceControls
                                         .frame(maxWidth: .infinity, alignment: .center)
                                         .transition(.move(edge: .bottom).combined(with: .opacity))
+                                        .zIndex(10)
                                 }
                             }
 

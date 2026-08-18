@@ -1684,6 +1684,16 @@ struct LocusMapView: UIViewRepresentable {
         // Disabling cancellation lets the button's touch sequence survive arbitration.
         Self.disableTouchCancellation(in: mapView)
 
+        // Gate our recognizers so they only see touches that land inside the
+        // map's own view hierarchy. SwiftUI buttons overlaid on the map live
+        // outside that hierarchy, so their taps no longer compete with the
+        // map's gesture arbitration. MapKit's internal recognizers are left
+        // untouched (they manage their own simultaneous-gesture coordination).
+        let gate = MapTouchGate()
+        context.coordinator.touchGate = gate
+        tap.delegate = gate
+        longPress.delegate = gate
+
         onMapViewCreated(mapView)
         return mapView
     }
@@ -1782,6 +1792,21 @@ struct LocusMapView: UIViewRepresentable {
         view.subviews.forEach { disableTouchCancellation(in: $0) }
     }
 
+    /// Lets map gesture recognizers see only touches that land inside the map's
+    /// own view hierarchy. SwiftUI controls overlaid on the map live outside
+    /// that hierarchy, so their taps never enter the map's gesture arbitration
+    /// and never get swallowed by double-tap-to-zoom / pan / pinch.
+    final class MapTouchGate: NSObject, UIGestureRecognizerDelegate {
+        func gestureRecognizer(
+            _ gestureRecognizer: UIGestureRecognizer,
+            shouldReceive touch: UITouch
+        ) -> Bool {
+            guard let mapView = gestureRecognizer.view else { return false }
+            guard let view = touch.view else { return false }
+            return view === mapView || view.isDescendant(of: mapView)
+        }
+    }
+
     private static func regionDiffers(_ lhs: MKCoordinateRegion, _ rhs: MKCoordinateRegion) -> Bool {
         lhs.center.latitude != rhs.center.latitude
             || lhs.center.longitude != rhs.center.longitude
@@ -1798,6 +1823,7 @@ struct LocusMapView: UIViewRepresentable {
         var routeOverlay: MKPolyline?
         var alternativeOverlays: [MKPolyline] = []
         var drawnOverlay: MKPolyline?
+        var touchGate: MapTouchGate?
         var onRegionSettled: (() -> Void)?
 
         init(_ parent: LocusMapView) {

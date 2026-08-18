@@ -1770,7 +1770,15 @@ struct LocusMapView: UIViewRepresentable {
     }
 
     private static func disableTouchCancellation(in view: UIView) {
-        view.gestureRecognizers?.forEach { $0.cancelsTouchesInView = false }
+        view.gestureRecognizers?.forEach {
+            $0.cancelsTouchesInView = false
+            // MKMapView's double-tap-to-zoom recognizer delays touchesEnded
+            // while it waits to see whether a second tap follows. Buttons
+            // overlaid on the map (route run/delete, route choices) then need
+            // several taps before SwiftUI sees a clean touch sequence.
+            $0.delaysTouchesBegan = false
+            $0.delaysTouchesEnded = false
+        }
         view.subviews.forEach { disableTouchCancellation(in: $0) }
     }
 

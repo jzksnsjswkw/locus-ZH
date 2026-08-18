@@ -43,6 +43,8 @@ struct BackupPreferences: Codable {
     var restoreLastMapView: Bool
     var appearanceMode: String?
     var zoomSliderEnabled: Bool?
+    var locationJitterEnabled: Bool?
+    var locationJitterRadius: Double?
 }
 
 enum BackupError: LocalizedError {

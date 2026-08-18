@@ -117,6 +117,13 @@ final class SpoofSession: ObservableObject {
     @Published var routeLoopCount = 2 {
         didSet { UserDefaults.standard.set(routeLoopCount, forKey: "locus.routeLoopCount") }
     }
+    /// Random position jitter applied to route / joystick movement (meters).
+    @Published var locationJitterEnabled = false {
+        didSet { UserDefaults.standard.set(locationJitterEnabled, forKey: "locus.locationJitterEnabled") }
+    }
+    @Published var locationJitterRadius: Double = 3 {
+        didSet { UserDefaults.standard.set(locationJitterRadius, forKey: "locus.locationJitterRadius") }
+    }
 
     @Published var favorites: [SavedPlace] = []
     @Published var recents: [SavedPlace] = []
@@ -145,6 +152,9 @@ final class SpoofSession: ObservableObject {
         speedMultiplier = storedSpeed > 0 ? min(4.0, max(0.25, storedSpeed)) : 1.0
         routeLoopEnabled = UserDefaults.standard.bool(forKey: "locus.routeLoopEnabled")
         routeLoopCount = max(2, min(99, UserDefaults.standard.integer(forKey: "locus.routeLoopCount")))
+        locationJitterEnabled = UserDefaults.standard.bool(forKey: "locus.locationJitterEnabled")
+        let storedJitterRadius = UserDefaults.standard.double(forKey: "locus.locationJitterRadius")
+        locationJitterRadius = storedJitterRadius > 0 ? min(20, max(1, storedJitterRadius)) : 3
         travelMode = TravelMode(rawValue: UserDefaults.standard.string(forKey: "locus.travelMode") ?? "") ?? .walk
         mapStyleIndex = min(1, max(0, UserDefaults.standard.integer(forKey: "locus.mapStyleIndex")))
         targetSelectionMode = TargetSelectionMode(
@@ -220,7 +230,9 @@ final class SpoofSession: ObservableObject {
                 autoFollowRoute: autoFollowRoute,
                 restoreLastMapView: restoreLastMapView,
                 appearanceMode: appearanceMode.rawValue,
-                zoomSliderEnabled: zoomSliderEnabled
+                zoomSliderEnabled: zoomSliderEnabled,
+                locationJitterEnabled: locationJitterEnabled,
+                locationJitterRadius: locationJitterRadius
             )
         )
     }
@@ -255,6 +267,12 @@ final class SpoofSession: ObservableObject {
         }
         if let storedZoomSliderEnabled = backup.preferences.zoomSliderEnabled {
             zoomSliderEnabled = storedZoomSliderEnabled
+        }
+        if let storedJitterEnabled = backup.preferences.locationJitterEnabled {
+            locationJitterEnabled = storedJitterEnabled
+        }
+        if let storedJitterRadius = backup.preferences.locationJitterRadius {
+            locationJitterRadius = min(20, max(1, storedJitterRadius))
         }
     }
 
@@ -462,9 +480,11 @@ final class SpoofSession: ObservableObject {
                     for i in 1...steps {
                         if Task.isCancelled { break }
                         let t = Double(i) / Double(steps)
-                        let coord = CLLocationCoordinate2D(
-                            latitude: previous.latitude + (next.latitude - previous.latitude) * t,
-                            longitude: previous.longitude + (next.longitude - previous.longitude) * t
+                        let coord = jittered(
+                            CLLocationCoordinate2D(
+                                latitude: previous.latitude + (next.latitude - previous.latitude) * t,
+                                longitude: previous.longitude + (next.longitude - previous.longitude) * t
+                            )
                         )
                         speed = max(0.2, self.travelMode.baseSpeed * self.speedMultiplier * Double.random(in: 0.94...1.06))
                         let delay = max(0.05, stepMeters / speed)
@@ -738,7 +758,7 @@ final class SpoofSession: ObservableObject {
         let speed = travelMode.baseSpeed * speedMultiplier * min(1.0, magnitude) * Double.random(in: 0.9...1.1)
         let dt = 0.25
         let meters = speed * dt
-        let next = offset(coordinate: current, eastMeters: nx * meters, northMeters: ny * meters)
+        let next = jittered(offset(coordinate: current, eastMeters: nx * meters, northMeters: ny * meters))
         _ = apply(next, markRecent: false)
     }
 
@@ -792,5 +812,14 @@ final class SpoofSession: ObservableObject {
         let dLat = northMeters / earth * (180 / .pi)
         let dLon = eastMeters / (earth * cos(coordinate.latitude * .pi / 180)) * (180 / .pi)
         return CLLocationCoordinate2D(latitude: coordinate.latitude + dLat, longitude: coordinate.longitude + dLon)
+    }
+
+    /// Applies a uniformly-random circular offset when jitter is enabled,
+    /// otherwise returns the coordinate unchanged.
+    private func jittered(_ coordinate: CLLocationCoordinate2D) -> CLLocationCoordinate2D {
+        guard locationJitterEnabled, locationJitterRadius > 0 else { return coordinate }
+        let angle = Double.random(in: 0..<(2 * .pi))
+        let radius = sqrt(Double.random(in: 0...1)) * locationJitterRadius
+        return offset(coordinate: coordinate, eastMeters: cos(angle) * radius, northMeters: sin(angle) * radius)
     }
 }

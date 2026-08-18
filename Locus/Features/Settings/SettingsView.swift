@@ -175,10 +175,21 @@ struct SettingsView: View {
             Toggle("地图缩放滑条", isOn: $session.zoomSliderEnabled)
             Toggle("轨迹运行时自动跟随", isOn: $session.autoFollowRoute)
             Toggle("启动时恢复上次地图视角", isOn: $session.restoreLastMapView)
+
+            Toggle("模拟位置随机抖动", isOn: $session.locationJitterEnabled)
+            if session.locationJitterEnabled {
+                Stepper(value: $session.locationJitterRadius, in: 1...20, step: 1) {
+                    LabeledContent("抖动半径") {
+                        Text("\(Int(session.locationJitterRadius)) 米")
+                            .monospacedDigit()
+                            .foregroundStyle(.secondary)
+                    }
+                }
+            }
         } header: {
             Text("地图与交互")
         } footer: {
-            Text("地图缩放滑条默认关闭；开启后可直接上下拖动。")
+            Text("位置抖动让轨迹更接近真实 GPS 行为；半径越大抖动越明显。")
         }
     }
 

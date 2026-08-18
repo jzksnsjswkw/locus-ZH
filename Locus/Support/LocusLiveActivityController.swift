@@ -53,7 +53,7 @@ actor LocusLiveActivityController {
         if currentActivity != nil,
            lastPublishedStatus == status,
            let lastPublishedAt,
-           now.timeIntervalSince(lastPublishedAt) < 10 {
+           now.timeIntervalSince(lastPublishedAt) < 5 {
             return
         }
 

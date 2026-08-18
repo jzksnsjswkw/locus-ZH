@@ -14,7 +14,6 @@ struct LocusLiveActivityWidget: Widget {
     var body: some WidgetConfiguration {
         ActivityConfiguration(for: LocusActivityAttributes.self) { context in
             statusCard(context.state)
-                .activityBackgroundTint(.black.opacity(0.86))
                 .activitySystemActionForegroundColor(.cyan)
         } dynamicIsland: { context in
             DynamicIsland {

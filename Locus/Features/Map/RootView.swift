@@ -7,6 +7,10 @@ import UIKit
 enum MapChromeLayout {
     static let horizontalPadding: CGFloat = 16
     static let spacing: CGFloat = 10
+    // Route-control rows are stacked with this spacing; the run row's hit shape
+    // extends downward by the same amount so the strip between rows stays tappable
+    // instead of falling through to the map.
+    static let routeRowSpacing: CGFloat = 5
     static let primaryHeight: CGFloat = 56
     static let rightColumnWidth: CGFloat = 56
     // Leave MapKit's system-owned attribution unobscured. Its position is not
@@ -56,7 +60,7 @@ struct RootView: View {
 
                 if !searchPresented {
                     HStack(alignment: .bottom, spacing: MapChromeLayout.spacing) {
-                        VStack(spacing: MapChromeLayout.spacing) {
+                        VStack(spacing: MapChromeLayout.routeRowSpacing) {
                             if drawingRouteActive {
                                 drawingRouteControls
                                     .frame(maxWidth: .infinity, alignment: .center)
@@ -204,8 +208,9 @@ struct RootView: View {
                 Label("删除", systemImage: "trash.fill")
                     .foregroundStyle(LocusTheme.danger)
                     .frame(maxWidth: .infinity, maxHeight: .infinity)
-                    .contentShape(Rectangle().inset(by: -14))
+                    .contentShape(Rectangle())
             }
+            .frame(maxHeight: .infinity)
 
             Divider()
                 .overlay(Color.white.opacity(0.25))
@@ -218,15 +223,16 @@ struct RootView: View {
                 Label("运行", systemImage: "play.fill")
                     .foregroundStyle(.blue)
                     .frame(maxWidth: .infinity, maxHeight: .infinity)
-                    .contentShape(Rectangle().inset(by: -14))
+                    .contentShape(Rectangle())
             }
+            .frame(maxHeight: .infinity)
         }
         .font(.subheadline.weight(.bold))
         .buttonStyle(.plain)
         .padding(.horizontal, 4)
         .frame(width: 224, height: 50)
         .locusGlass(.regular, in: Capsule())
-        .contentShape(Capsule())
+        .contentShape(Rectangle().inset(by: -MapChromeLayout.routeRowSpacing))
     }
 
     private var routeChoiceControls: some View {
@@ -255,18 +261,18 @@ struct RootView: View {
                                 : Color.primary.opacity(0.06)
                         )
                     )
-                    .contentShape(Rectangle().inset(by: -14))
+                    .contentShape(Rectangle())
                 }
                 .buttonStyle(.plain)
                 .frame(maxHeight: .infinity)
-                .contentShape(Rectangle().inset(by: -14))
+                .contentShape(Rectangle())
             }
         }
-        .padding(4)
+        .padding(.horizontal, 4)
         .frame(maxWidth: 320)
         .frame(height: 50)
         .locusGlass(.regular, in: Capsule())
-        .contentShape(Capsule())
+        .contentShape(Rectangle())
     }
 
     private func routeOptionDetail(_ option: PlannedRoute) -> String {
@@ -307,7 +313,7 @@ struct RootView: View {
         .frame(maxWidth: 320)
         .frame(height: 50)
         .locusGlass(.regular, in: Capsule())
-        .contentShape(Capsule())
+        .contentShape(Rectangle())
     }
 
     private func drawingActionButton(

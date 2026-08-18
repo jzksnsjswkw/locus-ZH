@@ -24,6 +24,8 @@ struct MapHomeView: View {
     )
     /// Bumped by the locate button so LocusMapView eases the camera over 0.35s.
     @State private var animateRegionToken = 0
+    /// One-shot flag: auto-jump to the current location on the first real fix.
+    @State private var didAutoLocateOnFirstFix = false
     @State private var mapView: MKMapView?
     @State private var searchText = ""
     @FocusState private var searchFocused: Bool
@@ -33,6 +35,8 @@ struct MapHomeView: View {
     @State private var routeCoords: [CLLocationCoordinate2D] = []
     @State private var routeIsHandDrawn = false
     @State private var edgeZoomStartRegion: MKCoordinateRegion?
+    @State private var edgeZoomActive = false
+    @State private var edgeZoomFeedbackStep = 0
     @State private var lastLocationButtonTap: Date?
     @State private var isRouting = false
     @State private var showGPXImporter = false
@@ -56,6 +60,11 @@ struct MapHomeView: View {
     /// off-screen otherwise, because the body re-renders before updateUIView
     /// applies the new region).
     @State private var regionSettledToken = 0
+    /// Safe-area insets captured outside the full-bleed map surface; the
+    /// full-screen ZStack ignores the safe area, so UI chrome re-applies
+    /// these explicitly.
+    @State private var safeAreaTop: CGFloat = 0
+    @State private var safeAreaBottom: CGFloat = 0
 
     private var mapType: MKMapType {
         switch session.mapStyleIndex {
@@ -80,6 +89,7 @@ struct MapHomeView: View {
 
             topChrome
                 .zIndex(3)
+                .padding(.top, safeAreaTop)
 
             if !searchPresented {
                 VStack {
@@ -89,12 +99,15 @@ struct MapHomeView: View {
                         rightLowerDynamicControl
                     }
                     .padding(.trailing, 16)
-                    .padding(.bottom, bottomControlClearance)
+                    .padding(.bottom, bottomControlClearance + safeAreaBottom)
                 }
                 .allowsHitTesting(true)
                 .animation(.spring(response: 0.32, dampingFraction: 0.84), value: session.routeActive)
                 .animation(.spring(response: 0.32, dampingFraction: 0.84), value: session.routePaused)
-                .zIndex(2)
+                // zIndex 2 left the zoom rail un-hittable: an upper sibling
+                // (status chrome) claimed the region first. Keep this container
+                // above every chrome layer so the rail always receives touches.
+                .zIndex(99)
             }
 
             if searchPresented {
@@ -108,7 +121,7 @@ struct MapHomeView: View {
                     searchBar
                 }
                 .padding(.horizontal, 16)
-                .padding(.bottom, 8)
+                .padding(.bottom, 8 + safeAreaBottom)
                 .transition(.move(edge: .bottom).combined(with: .opacity))
                 .zIndex(4)
             }
@@ -119,19 +132,32 @@ struct MapHomeView: View {
                     .padding(.horizontal, 14)
                     .padding(.vertical, 9)
                     .locusGlass(.regular, in: Capsule())
-                    .padding(.top, 154)
+                    .padding(.top, 154 + safeAreaTop)
                     .allowsHitTesting(false)
                     .transition(.move(edge: .top).combined(with: .opacity))
                     .zIndex(3)
             }
         }
+        .ignoresSafeArea()
+        .background(
+            GeometryReader { proxy in
+                Color.clear
+                    .onAppear {
+                        safeAreaTop = proxy.safeAreaInsets.top
+                        safeAreaBottom = proxy.safeAreaInsets.bottom
+                    }
+                    .onChange(of: proxy.safeAreaInsets.top) { safeAreaTop = $0 }
+                    .onChange(of: proxy.safeAreaInsets.bottom) { safeAreaBottom = $0 }
+                    .allowsHitTesting(false)
+            }
+        )
     }
 
-    /// Map + marker overlays share one coordinate space so MKMapView point
-    /// conversions line up with SwiftUI `.position`. The map stays inside the
-    /// safe layout bounds so conversions match finger position — ignoring the
-    /// safe area would make the tiles full-bleed but shift conversions upward
-    /// by ~status-bar height.
+    /// Map + marker overlays share one coordinate space: the surface is
+    /// full-bleed (ignoresSafeArea above), so MKMapView's bounds start at the
+    /// window origin and convert() results line up with SwiftUI `.position`.
+    /// UI chrome (status card, search, right rail) re-applies the safe-area
+    /// insets explicitly via `safeAreaTop`/`safeAreaBottom`.
     private var mapLayer: some View {
         ZStack {
             LocusMapView(
@@ -255,6 +281,11 @@ struct MapHomeView: View {
         }
         .onReceive(NotificationCenter.default.publisher(for: .locusBuildRouteToTarget)) { _ in
             buildRouteToCurrentTarget()
+        }
+        .onReceive(NotificationCenter.default.publisher(for: .locusFirstRealFix)) { _ in
+            guard !didAutoLocateOnFirstFix else { return }
+            didAutoLocateOnFirstFix = true
+            goToCurrentLocation()
         }
         .onChange(of: session.targetSelectionMode) { mode in
             closePinActions()
@@ -825,34 +856,55 @@ struct MapHomeView: View {
         }
         .frame(
             width: 148,
-            height: session.joystickActive ? 148 : MapChromeLayout.rightColumnWidth * 4,
+            height: session.joystickActive ? 148 : MapChromeLayout.rightColumnWidth * 7 + 18,
             alignment: .bottomTrailing
         )
         .animation(.spring(response: 0.38, dampingFraction: 0.78), value: session.joystickActive)
     }
 
     private var railZoomHandle: some View {
-        EdgeMapZoomGesture(
-            onBegan: beginEdgeZoom,
-            onChanged: updateEdgeZoom,
-            onEnded: endEdgeZoom
-        )
-        .frame(width: 32, height: MapChromeLayout.rightColumnWidth * 3)
-        .overlay {
-            VStack(spacing: 8) {
-                Image(systemName: "chevron.up")
-                Capsule()
-                    .fill(Color.primary.opacity(0.45))
-                    .frame(width: 3, height: 70)
-                Image(systemName: "chevron.down")
-            }
-                .font(.caption2.weight(.bold))
-                .foregroundStyle(.secondary)
-                .allowsHitTesting(false)
+        VStack(spacing: 8) {
+            Image(systemName: "chevron.up")
+            Capsule()
+                .fill(Color.primary.opacity(0.45))
+                .frame(width: 3, height: 70)
+            Image(systemName: "chevron.down")
         }
+        .font(.caption2.weight(.bold))
+        .foregroundStyle(.secondary)
+        .frame(width: 32, height: MapChromeLayout.rightColumnWidth * 3)
         .locusGlass(.clear, in: Capsule())
+        .contentShape(Rectangle())
+        .gesture(zoomGesture)
         .accessibilityLabel("地图缩放手势区")
         .accessibilityHint("直接向上滑放大，向下滑缩小")
+    }
+
+    private var zoomGesture: some Gesture {
+        DragGesture(minimumDistance: 0)
+            .onChanged { value in
+                activateEdgeZoomIfNeeded()
+                updateEdgeZoom(value.translation.height)
+                let feedbackStep = Int((value.translation.height / 72).rounded(.towardZero))
+                if feedbackStep != edgeZoomFeedbackStep {
+                    edgeZoomFeedbackStep = feedbackStep
+                    UISelectionFeedbackGenerator().selectionChanged()
+                }
+            }
+            .onEnded { _ in
+                guard edgeZoomActive else { return }
+                edgeZoomActive = false
+                edgeZoomFeedbackStep = 0
+                endEdgeZoom()
+            }
+    }
+
+    private func activateEdgeZoomIfNeeded() {
+        guard !edgeZoomActive else { return }
+        edgeZoomActive = true
+        edgeZoomFeedbackStep = 0
+        UIImpactFeedbackGenerator(style: .soft).impactOccurred()
+        beginEdgeZoom()
     }
 
     private var rightLowerControls: some View {
@@ -1033,17 +1085,22 @@ struct MapHomeView: View {
     }
 
     private func updateEdgeZoom(_ verticalTranslation: CGFloat) {
-        guard let start = edgeZoomStartRegion else { return }
+        guard let start = edgeZoomStartRegion, let mapView else { return }
         let scale = pow(2, Double(verticalTranslation / 120))
         let latitudeDelta = min(120, max(0.0005, start.span.latitudeDelta * scale))
         let longitudeDelta = min(360, max(0.0005, start.span.longitudeDelta * scale))
-        region = MKCoordinateRegion(
+        let newRegion = MKCoordinateRegion(
             center: start.center,
             span: MKCoordinateSpan(
                 latitudeDelta: latitudeDelta,
                 longitudeDelta: longitudeDelta
             )
         )
+        // Apply directly to the map: routing through the `region` @State would
+        // race regionDidChangeAnimated, whose write-back of the PREVIOUS frame's
+        // value overwrites this frame's update before updateUIView applies it
+        // (regionDiffers then sees no change) — leaving the slider dead.
+        mapView.setRegion(newRegion, animated: false)
     }
 
     private func endEdgeZoom() {
@@ -1440,48 +1497,6 @@ struct MapHomeView: View {
     }
 }
 
-private struct EdgeMapZoomGesture: View {
-    let onBegan: () -> Void
-    let onChanged: (CGFloat) -> Void
-    let onEnded: () -> Void
-
-    @State private var isActive = false
-    @State private var lastFeedbackStep = 0
-
-    var body: some View {
-        Color.clear
-            .contentShape(Rectangle())
-            .gesture(zoomGesture)
-    }
-
-    private var zoomGesture: some Gesture {
-        DragGesture(minimumDistance: 0)
-            .onChanged { value in
-                activateIfNeeded()
-                onChanged(value.translation.height)
-                let feedbackStep = Int((value.translation.height / 72).rounded(.towardZero))
-                if feedbackStep != lastFeedbackStep {
-                    lastFeedbackStep = feedbackStep
-                    UISelectionFeedbackGenerator().selectionChanged()
-                }
-            }
-            .onEnded { _ in
-                guard isActive else { return }
-                isActive = false
-                lastFeedbackStep = 0
-                onEnded()
-            }
-    }
-
-    private func activateIfNeeded() {
-        guard !isActive else { return }
-        isActive = true
-        lastFeedbackStep = 0
-        UIImpactFeedbackGenerator(style: .soft).impactOccurred()
-        onBegan()
-    }
-}
-
 private struct FavoriteMapMarker: View {
     var selected: Bool
     var onSelect: () -> Void
@@ -1740,21 +1755,6 @@ struct LocusMapView: UIViewRepresentable {
         }
         context.coordinator.animateRegionToken = animateRegionToken
 
-        // Spoofed-location marker.
-        if let simulated {
-            if let annotation = context.coordinator.spoofAnnotation {
-                annotation.coordinate = simulated
-            } else {
-                let annotation = MKPointAnnotation()
-                annotation.coordinate = simulated
-                mapView.addAnnotation(annotation)
-                context.coordinator.spoofAnnotation = annotation
-            }
-        } else if let annotation = context.coordinator.spoofAnnotation {
-            mapView.removeAnnotation(annotation)
-            context.coordinator.spoofAnnotation = nil
-        }
-
         // Rebuilding overlays is expensive (hundreds of points, add/remove
         // churn on the renderer), and updateUIView fires on every body change
         // (status updates, region settles...). Only rebuild when the route
@@ -1836,7 +1836,8 @@ struct LocusMapView: UIViewRepresentable {
         ) -> Bool {
             guard let mapView = gestureRecognizer.view else { return false }
             guard let view = touch.view else { return false }
-            return view === mapView || view.isDescendant(of: mapView)
+            let inMap = view === mapView || view.isDescendant(of: mapView)
+            return inMap
         }
     }
 
@@ -1852,7 +1853,6 @@ struct LocusMapView: UIViewRepresentable {
         var lastRegion: MKCoordinateRegion?
         var didSetInitialRegion = false
         var animateRegionToken = 0
-        var spoofAnnotation: MKPointAnnotation?
         var routeOverlay: MKPolyline?
         var alternativeOverlays: [MKPolyline] = []
         var drawnOverlay: MKPolyline?
@@ -1889,33 +1889,6 @@ struct LocusMapView: UIViewRepresentable {
             guard didSetInitialRegion else { return }
             parent.region = mapView.region
             onRegionSettled?()
-        }
-
-        func mapView(_ mapView: MKMapView, viewFor annotation: MKAnnotation) -> MKAnnotationView? {
-            if annotation is MKUserLocation { return nil }
-            guard let spoof = spoofAnnotation, annotation === spoof else { return nil }
-            let identifier = "locus.spoof"
-            let view = mapView.dequeueReusableAnnotationView(withIdentifier: identifier)
-                ?? MKAnnotationView(annotation: annotation, reuseIdentifier: identifier)
-            view.annotation = annotation
-            view.isEnabled = false
-            view.canShowCallout = false
-
-            if view.subviews.isEmpty {
-                let outer = UIView(frame: CGRect(x: 0, y: 0, width: 44, height: 44))
-                outer.layer.cornerRadius = 22
-                outer.backgroundColor = UIColor(LocusTheme.accent).withAlphaComponent(0.25)
-
-                let inner = UIView(frame: CGRect(x: 15, y: 15, width: 14, height: 14))
-                inner.layer.cornerRadius = 7
-                inner.backgroundColor = UIColor(LocusTheme.accent)
-                inner.layer.borderWidth = 2
-                inner.layer.borderColor = UIColor.white.cgColor
-
-                outer.addSubview(inner)
-                view.addSubview(outer)
-            }
-            return view
         }
 
         func mapView(_ mapView: MKMapView, rendererFor overlay: MKOverlay) -> MKOverlayRenderer {

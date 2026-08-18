@@ -1684,13 +1684,18 @@ struct LocusMapView: UIViewRepresentable {
         // Disabling cancellation lets the button's touch sequence survive arbitration.
         Self.disableTouchCancellation(in: mapView)
 
-        // Gate our recognizers so they only see touches that land inside the
-        // map's own view hierarchy. SwiftUI buttons overlaid on the map live
-        // outside that hierarchy, so their taps no longer compete with the
-        // map's gesture arbitration. MapKit's internal recognizers are left
-        // untouched (they manage their own simultaneous-gesture coordination).
+        // Gate every recognizer (ours and MapKit's) so they only see touches
+        // that land inside the map's own view hierarchy. SwiftUI buttons
+        // overlaid on the map live outside that hierarchy, so their taps no
+        // longer enter the map's gesture arbitration — the double-tap-to-zoom
+        // recognizer would otherwise swallow the first tap (buttons need
+        // several taps before responding). Verified: map pan/zoom still works
+        // with all recognizers gated.
         let gate = MapTouchGate()
         context.coordinator.touchGate = gate
+        for recognizer in mapView.gestureRecognizers ?? [] {
+            recognizer.delegate = gate
+        }
         tap.delegate = gate
         longPress.delegate = gate
 

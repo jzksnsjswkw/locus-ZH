@@ -255,7 +255,7 @@ struct RootView: View {
                                 : Color.primary.opacity(0.06)
                         )
                     )
-                    .contentShape(Capsule())
+                    .contentShape(Rectangle())
                 }
                 .buttonStyle(.plain)
                 .frame(maxHeight: .infinity)

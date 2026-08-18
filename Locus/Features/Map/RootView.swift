@@ -204,7 +204,7 @@ struct RootView: View {
                 Label("删除", systemImage: "trash.fill")
                     .foregroundStyle(LocusTheme.danger)
                     .frame(maxWidth: .infinity, maxHeight: .infinity)
-                    .contentShape(Rectangle())
+                    .contentShape(Rectangle().inset(by: -14))
             }
 
             Divider()
@@ -218,7 +218,7 @@ struct RootView: View {
                 Label("运行", systemImage: "play.fill")
                     .foregroundStyle(.blue)
                     .frame(maxWidth: .infinity, maxHeight: .infinity)
-                    .contentShape(Rectangle())
+                    .contentShape(Rectangle().inset(by: -14))
             }
         }
         .font(.subheadline.weight(.bold))
@@ -255,10 +255,11 @@ struct RootView: View {
                                 : Color.primary.opacity(0.06)
                         )
                     )
-                    .contentShape(Rectangle())
+                    .contentShape(Rectangle().inset(by: -14))
                 }
                 .buttonStyle(.plain)
                 .frame(maxHeight: .infinity)
+                .contentShape(Rectangle().inset(by: -14))
             }
         }
         .padding(4)

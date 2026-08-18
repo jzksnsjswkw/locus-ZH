@@ -1151,7 +1151,8 @@ struct MapHomeView: View {
     }
 
     private var currentRouteLocation: CLLocationCoordinate2D? {
-        session.simulated ?? session.realMapCoordinate
+        // Same fallback chain as the ios16 build: simulated → real GPS → pin.
+        session.simulated ?? session.realMapCoordinate ?? session.pin
     }
 
     private var simulatedCoordinateKey: String {
@@ -1736,8 +1737,10 @@ struct LocusMapView: UIViewRepresentable {
         if routeCoords.count > 1 {
             if let overlay = context.coordinator.routeOverlay { mapView.removeOverlay(overlay) }
             let polyline = MKPolyline(coordinates: routeCoords, count: routeCoords.count)
-            mapView.addOverlay(polyline)
+            // Assign before addOverlay: MapKit may call rendererFor synchronously
+            // from within addOverlay, and rendererFor dispatches on identity.
             context.coordinator.routeOverlay = polyline
+            mapView.addOverlay(polyline)
         } else if let overlay = context.coordinator.routeOverlay {
             mapView.removeOverlay(overlay)
             context.coordinator.routeOverlay = nil
@@ -1750,16 +1753,16 @@ struct LocusMapView: UIViewRepresentable {
         context.coordinator.alternativeOverlays.removeAll()
         for coords in alternativeRouteCoords where coords.count > 1 {
             let polyline = MKPolyline(coordinates: coords, count: coords.count)
-            mapView.addOverlay(polyline)
             context.coordinator.alternativeOverlays.append(polyline)
+            mapView.addOverlay(polyline)
         }
 
         // Drawn path polyline (dashed).
         if drawnPath.count > 1 {
             if let overlay = context.coordinator.drawnOverlay { mapView.removeOverlay(overlay) }
             let polyline = MKPolyline(coordinates: drawnPath, count: drawnPath.count)
-            mapView.addOverlay(polyline)
             context.coordinator.drawnOverlay = polyline
+            mapView.addOverlay(polyline)
         } else if let overlay = context.coordinator.drawnOverlay {
             mapView.removeOverlay(overlay)
             context.coordinator.drawnOverlay = nil
@@ -1808,6 +1811,12 @@ struct LocusMapView: UIViewRepresentable {
 
         func mapView(_ mapView: MKMapView, regionDidChangeAnimated animated: Bool) {
             lastRegion = mapView.region
+            // During the initial frame, MKMapView reports its default region
+            // (e.g. the whole country view) before the app's initial region has
+            // been applied; writing that back to the @Binding would clobber the
+            // initial region and leave the map anywhere but where the app asked.
+            // Defer callbacks until the initial region is applied.
+            guard didSetInitialRegion else { return }
             parent.region = mapView.region
             onRegionSettled?()
         }

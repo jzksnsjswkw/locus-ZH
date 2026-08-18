@@ -23,7 +23,7 @@ cd "$(dirname "$0")"
 OUT_TIPA="Locus.tipa"
 DO_SDK_PATCH=1
 SDK_TARGET_VER="18.5"   # 让旧系统认为 app 链接自旧 SDK 的伪装版本
-MINOS_VER="16.0"        # 保持与部署目标一致
+MINOS_VER="16.3"        # 保持与部署目标一致
 SDK_NAME="iphoneos26.5" # 构建用 SDK（新 SDK 编译, 运行时伪装旧版本）
 ENTITLEMENTS="Locus/Resources/Locus.entitlements"
 PBXPROJ="Locus.xcodeproj/project.pbxproj"

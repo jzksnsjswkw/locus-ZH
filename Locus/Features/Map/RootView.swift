@@ -961,7 +961,7 @@ struct BottomControlsView: View {
         Button {
             showRouteSheet = true
         } label: {
-            Image(systemName: "point.topleft.down.to.point.bottomright.curvepath")
+            Image(systemName: "point.topleft.down.curvedto.point.bottomright.up")
                 .font(.body.weight(.semibold))
                 .foregroundStyle(.primary)
                 .frame(width: 48, height: 48)

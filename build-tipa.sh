@@ -43,22 +43,7 @@ done
 [ -f "$ENTITLEMENTS" ] || { echo "缺少 entitlements: $ENTITLEMENTS"; exit 1; }
 [ -f "$PBXPROJ" ] || { echo "缺少工程文件: $PBXPROJ"; exit 1; }
 
-echo "==> [2/6] 备份并临时移除 asset 编译配置 (规避 actool 模拟器 runtime 报错)"
-cp "$PBXPROJ" /tmp/pbxproj.bak
-sed -i '' \
-  -e '/ASSETCATALOG_COMPILER_APPICON_NAME/d' \
-  -e '/Assets.xcassets/d' \
-  -e '/AppIcon.icon/d' \
-  "$PBXPROJ"
-
-restore_pbxproj() {
-  cp /tmp/pbxproj.bak "$PBXPROJ"
-  echo "==> [4b/6] 已恢复 project.pbxproj"
-}
-trap restore_pbxproj EXIT
-
-echo "==> [3/6] 构建 (sdk=$SDK_NAME, 免签名)"
-rm -rf build
+echo "==> [2/6] 构建 (sdk=$SDK_NAME, 免签名)"
 xcodebuild -project Locus.xcodeproj -target Locus -sdk "$SDK_NAME" \
   -configuration Release CODE_SIGNING_ALLOWED=NO build 2>&1 \
   | tee /tmp/locus_build.log \
@@ -73,25 +58,21 @@ APP="build/Release-iphoneos/Locus.app"
 BIN="$APP/Locus"
 [ -f "$BIN" ] || { echo "找不到构建产物: $BIN"; exit 1; }
 
-echo "==> [4/6] 恢复 project.pbxproj"
-restore_pbxproj
-trap - EXIT
-
 if [ "$DO_SDK_PATCH" = "1" ]; then
-  echo "==> [5a/6] 应用 SDK 版本补丁: sdk 26.5 -> $SDK_TARGET_VER (修复 iOS 16 黑屏地图)"
+  echo "==> [3/6] 应用 SDK 版本补丁: sdk 26.5 -> $SDK_TARGET_VER (修复 iOS 16 黑屏地图)"
   vtool -show-build-version "$BIN" 2>/dev/null | grep -E "minos|sdk" || true
   vtool -set-build-version ios "$MINOS_VER" "$SDK_TARGET_VER" -replace -output "$BIN" "$BIN"
   vtool -show-build-version "$BIN" 2>/dev/null | grep -E "minos|sdk" || true
   echo "   (警告: code signature will be invalid 属预期, 下方会重新签名)"
 else
-  echo "==> [5a/6] 跳过 SDK 版本补丁 (--no-sdk-patch)"
+  echo "==> [3/6] 跳过 SDK 版本补丁 (--no-sdk-patch)"
 fi
 
-echo "==> [5b/6] ldid 签名 (嵌入 $ENTITLEMENTS)"
+echo "==> [4/6] ldid 签名 (嵌入 $ENTITLEMENTS)"
 rm -rf "$APP/_CodeSignature"
 ldid -S"$ENTITLEMENTS" "$BIN"
 
-echo "==> [6/6] 打包 $OUT_TIPA"
+echo "==> [5/6] 打包 $OUT_TIPA"
 rm -rf /tmp/locus_tipa_pkg
 mkdir -p /tmp/locus_tipa_pkg/Payload
 cp -R "$APP" /tmp/locus_tipa_pkg/Payload/

@@ -7,7 +7,6 @@
 	objects = {
 
 /* Begin PBXBuildFile section */
-		170627CC7AAA8335B2A3277F /* AppIcon.icon in Resources */ = {isa = PBXBuildFile; fileRef = D8943CD40A866E202F7964F6 /* AppIcon.icon */; };
 		1833D0A672C1396A3B666C1B /* LocusActivityAttributes.swift in Sources */ = {isa = PBXBuildFile; fileRef = 6B8C1927DBBDAD0CDFEB0839 /* LocusActivityAttributes.swift */; };
 		1A9609434342E76342B42B54 /* LocusEasterEggView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 361C48381EA09BB299BD110E /* LocusEasterEggView.swift */; };
 		1CBCD6A08AA473AB0CB526CA /* Theme.swift in Sources */ = {isa = PBXBuildFile; fileRef = 8EA9F9A2A821575AEE768E67 /* Theme.swift */; };
@@ -88,7 +87,6 @@
 		C6C3F15BC482A2CBF13B1EA6 /* SpoofSession.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SpoofSession.swift; sourceTree = "<group>"; };
 		CFF6D1EA6EBAAF543339FF81 /* JoystickPad.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = JoystickPad.swift; sourceTree = "<group>"; };
 		D76779E56819A74B78236EF1 /* RoutePlannerSheet.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RoutePlannerSheet.swift; sourceTree = "<group>"; };
-		D8943CD40A866E202F7964F6 /* AppIcon.icon */ = {isa = PBXFileReference; lastKnownFileType = wrapper.icon; path = AppIcon.icon; sourceTree = "<group>"; };
 		F714A23C4C718E67E978565F /* MapHomeView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MapHomeView.swift; sourceTree = "<group>"; };
 		FF1AF0F32E88B4227CA45694 /* RootView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RootView.swift; sourceTree = "<group>"; };
 /* End PBXFileReference section */
@@ -153,7 +151,6 @@
 		796058090ADB9656F1AC489F = {
 			isa = PBXGroup;
 			children = (
-				D8943CD40A866E202F7964F6 /* AppIcon.icon */,
 				B9D7C7183910882434437EA5 /* Locus */,
 				CEE053B4D5BD4603C741DA1D /* LocusLiveActivity */,
 				1034C21D9930A5F35D463962 /* Products */,
@@ -317,7 +314,6 @@
 			isa = PBXResourcesBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
-				170627CC7AAA8335B2A3277F /* AppIcon.icon in Resources */,
 				74A5BCF6953128864737A070 /* Assets.xcassets in Resources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;

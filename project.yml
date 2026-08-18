@@ -5,10 +5,6 @@ options:
     iOS: "16.3"
   xcodeVersion: "16.0"
   createIntermediateGroups: true
-  # Icon Composer packages must be treated as a single file, not exploded.
-  fileTypes:
-    icon:
-      file: true
 settings:
   base:
     # Set your Apple Developer Team ID to build from source (see README).
@@ -24,7 +20,6 @@ targets:
       - path: Locus
         excludes:
           - "**/Info.plist"
-      - path: AppIcon.icon
     settings:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: com.chrismack.locus

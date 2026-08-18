@@ -44,17 +44,8 @@
 	<string>Locus 使用你的真实位置，以便定位地图，并在停止模拟定位后返回当前位置。</string>
 	<key>NSLocationAlwaysAndWhenInUseUsageDescription</key>
 	<string>Locus 会保持轻量级定位会话，以便模拟 GPS 在后台继续运行。</string>
-	<key>NSLocalNetworkUsageDescription</key>
-	<string>Locus 使用本地网络广播可配对主机（iOS 27 配对），并连接开发者隧道（LocalDevVPN）以模拟 GPS。</string>
-	<key>NSBonjourServices</key>
-	<array>
-		<string>_remotepairing._tcp</string>
-		<string>_remotepairing-pairable-host._tcp</string>
-		<string>_remoted._tcp</string>
-	</array>
 	<key>UIBackgroundModes</key>
 	<array>
-		<string>audio</string>
 		<string>location</string>
 		<string>processing</string>
 	</array>
@@ -64,17 +55,6 @@
 	<true/>
 	<key>CFBundleDocumentTypes</key>
 	<array>
-		<dict>
-			<key>CFBundleTypeName</key>
-			<string>配对文件</string>
-			<key>LSHandlerRank</key>
-			<string>Owner</string>
-			<key>LSItemContentTypes</key>
-			<array>
-				<string>com.apple.property-list</string>
-				<string>public.data</string>
-			</array>
-		</dict>
 		<dict>
 			<key>CFBundleTypeName</key>
 			<string>GPX 轨迹</string>
@@ -87,34 +67,8 @@
 			</array>
 		</dict>
 	</array>
-	<key>UTImportedTypeDeclarations</key>
-	<array>
-		<dict>
-			<key>UTTypeConformsTo</key>
-			<array>
-				<string>public.data</string>
-			</array>
-			<key>UTTypeDescription</key>
-			<string>远程配对文件</string>
-			<key>UTTypeIdentifier</key>
-			<string>com.chrismack.locus.rppairing</string>
-			<key>UTTypeTagSpecification</key>
-			<dict>
-				<key>public.filename-extension</key>
-				<array>
-					<string>plist</string>
-					<string>mobiledevicepairing</string>
-					<string>mobiledevicepair</string>
-				</array>
-			</dict>
-		</dict>
-	</array>
 	<key>ITSAppUsesNonExemptEncryption</key>
 	<false/>
-	<key>LSApplicationQueriesSchemes</key>
-	<array>
-		<string>localdevvpn</string>
-	</array>
 	<key>CFBundleURLTypes</key>
 	<array>
 		<dict>

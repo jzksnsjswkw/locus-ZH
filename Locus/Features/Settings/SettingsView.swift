@@ -2,12 +2,9 @@ import SwiftUI
 import UniformTypeIdentifiers
 
 struct SettingsView: View {
-    @EnvironmentObject private var pairing: PairingStore
     @EnvironmentObject private var session: SpoofSession
     @Environment(\.dismiss) private var dismiss
 
-    @State private var showImporter = false
-    @State private var showPairOnDevice = false
     @State private var showNameEasterEgg = false
     @State private var showBackupExporter = false
     @State private var showBackupImporter = false
@@ -15,14 +12,6 @@ struct SettingsView: View {
     @State private var pendingBackup: LocusBackup?
     @State private var backupNotice: String?
     @State private var confirmClearSearchHistory = false
-    @State private var tunnelIP = TunnelConfig.targetIP
-    @State private var localDevVPNInstalled = LocalDevVPN.isInstalled
-    @Environment(\.scenePhase) private var scenePhase
-
-    private var supportsOnDevicePairing: Bool {
-        if #available(iOS 27.0, *) { return true }
-        return false
-    }
 
     private var appVersion: String {
         let short = Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String ?? "—"
@@ -33,44 +22,6 @@ struct SettingsView: View {
     var body: some View {
         NavigationStack {
             List {
-                Section {
-                    Label {
-                        Text(pairing.hasPairingFile ? "已安装 RPPairing 配对文件" : "未安装配对文件")
-                    } icon: {
-                        Image(systemName: pairing.hasPairingFile ? "checkmark.seal.fill" : "exclamationmark.triangle.fill")
-                            .foregroundStyle(pairing.hasPairingFile ? LocusTheme.statusGood : LocusTheme.statusWarn)
-                    }
-
-                    if supportsOnDevicePairing {
-                        Button {
-                            showPairOnDevice = true
-                        } label: {
-                            Label("在此 iPhone 上配对", systemImage: "iphone.gen3.radiowaves.left.and.right")
-                        }
-                    }
-
-                    Button("导入 RPPairing 文件…") { showImporter = true }
-                    Button("从剪贴板粘贴 RPPairing") {
-                        do {
-                            try pairing.importPairingFromClipboard()
-                        } catch {
-                            session.lastError = error.localizedDescription
-                        }
-                    }
-                    if pairing.hasPairingFile {
-                        Button("删除配对文件", role: .destructive) {
-                            try? pairing.removePairing()
-                        }
-                    }
-                } header: {
-                    Text("开发者配对")
-                } footer: {
-                    Text(supportsOnDevicePairing
-                         ? "在 iOS 27 上可使用“在此 iPhone 上配对”，无需电脑。Locus 会广播可配对主机；请前往“设置”›“隐私与安全性”›“开发者模式”›“与主机配对”，确认 6 位代码。较旧的 iOS 版本需要导入由 idevice_pair 生成的 RPPairing 文件（不是 SideStore 的 lockdown .mobiledevicepairing 文件）。LiveContainer：请为 Locus 启用“修复文件选择器（Fix File Picker）”，或使用“粘贴”/“共享”→ LiveContainer → Locus。"
-                         : "请导入由 idevice_pair 生成的 RPPairing 文件（不是 SideStore 的 lockdown .mobiledevicepairing 文件）。如果文件选择器失效（LiveContainer 中较常见），请为此应用启用“修复文件选择器（Fix File Picker）”，将文件共享到 LiveContainer → Locus，或复制 plist 内容后使用“粘贴”。")
-                }
-                .locusSheetRows()
-
                 mapInteractionSection
                     .locusSheetRows()
 
@@ -95,23 +46,21 @@ struct SettingsView: View {
                 } header: {
                     Text("搜索与数据")
                 } footer: {
-                    Text("备份包含收藏、搜索历史和安全的界面设置，不包含 RPPairing、隧道 IP、正在运行的轨迹或设备连接状态。")
+                    Text("备份包含收藏、搜索历史和安全的界面设置，不包含正在运行的轨迹或设备连接状态。")
                 }
                 .locusSheetRows()
 
-                tunnelSection
-                    .locusSheetRows()
                 privacySection
                     .locusSheetRows()
 
                 Section("关于") {
                     LabeledContent("版本", value: appVersion)
-                    LabeledContent("定位引擎", value: "idevice DVT 定位模拟")
+                    LabeledContent("定位引擎", value: "CLSimulationManager（TrollStore）")
                     Link(destination: URL(string: "https://github.com/Bellaboy/locus-ZH")!) {
                         LabeledContent("项目主页", value: "Bellaboy/locus-ZH")
                     }
                     LabeledContent("原始项目", value: "ChrisMack32/Locus")
-                    Text("Locus 是采用 MIT 许可证的免费开源软件。定位注入使用采用 MIT 许可证的 idevice FFI。")
+                    Text("Locus 是采用 MIT 许可证的免费开源软件。定位注入使用 Apple 私有 CoreLocation 模拟 API（com.apple.locationd.simulation 权限）。")
                         .font(.footnote)
                         .foregroundStyle(.secondary)
                 }
@@ -139,29 +88,9 @@ struct SettingsView: View {
             .toolbar {
                 ToolbarItem(placement: .confirmationAction) {
                     Button("完成") {
-                        TunnelConfig.setTargetIP(tunnelIP)
                         dismiss()
                     }
                 }
-            }
-            .sheet(isPresented: $showImporter) {
-            PairingDocumentPicker(
-                onPick: { url in
-                    showImporter = false
-                    do {
-                        try pairing.importPairing(from: url)
-                    } catch {
-                        session.lastError = error.localizedDescription
-                    }
-                },
-                onCancel: { showImporter = false }
-            )
-            .ignoresSafeArea()
-        }
-            .sheet(isPresented: $showPairOnDevice) {
-                PairOnDeviceView()
-                    .environmentObject(pairing)
-                    .presentationDetents([.medium, .large])
             }
             .fullScreenCover(isPresented: $showNameEasterEgg) {
                 LocusEasterEggView()
@@ -221,14 +150,6 @@ struct SettingsView: View {
             } message: {
                 Text("此操作无法撤销。")
             }
-            .onAppear {
-                localDevVPNInstalled = LocalDevVPN.isInstalled
-            }
-            .onChange(of: scenePhase) { _, phase in
-                if phase == .active {
-                    localDevVPNInstalled = LocalDevVPN.isInstalled
-                }
-            }
         }
     }
 
@@ -258,40 +179,6 @@ struct SettingsView: View {
             Text("地图与交互")
         } footer: {
             Text("地图缩放滑条默认关闭；开启后可直接上下拖动。")
-        }
-    }
-
-    private var tunnelSection: some View {
-        Section {
-            TextField("设备隧道 IP", text: $tunnelIP)
-                .textInputAutocapitalization(.never)
-                .autocorrectionDisabled()
-                .onSubmit {
-                    TunnelConfig.setTargetIP(tunnelIP)
-                }
-            LabeledContent("状态") {
-                Text(LocalDevVPN.isConnected ? "已连接" : "未连接")
-                    .foregroundStyle(LocalDevVPN.isConnected ? LocusTheme.statusGood : LocusTheme.statusWarn)
-            }
-            Button("保存隧道 IP") {
-                TunnelConfig.setTargetIP(tunnelIP)
-            }
-            Button {
-                if localDevVPNInstalled {
-                    LocalDevVPN.openInstalled()
-                } else {
-                    LocalDevVPN.openAppStore()
-                }
-            } label: {
-                Label(
-                    localDevVPNInstalled ? "打开 LocalDevVPN" : "获取 LocalDevVPN（App Store）",
-                    systemImage: localDevVPNInstalled ? "lock.shield.fill" : "arrow.down.app.fill"
-                )
-            }
-        } header: {
-            Text("隧道")
-        } footer: {
-            Text("开始模拟定位前请连接 LocalDevVPN。默认隧道 IP 为 10.7.0.1。首次模拟定位请使用 Wi‑Fi，之后可继续通过蜂窝网络运行。")
         }
     }
 
@@ -325,7 +212,6 @@ struct PlacesView: View {
     }
 
     @EnvironmentObject private var session: SpoofSession
-    @EnvironmentObject private var pairing: PairingStore
     @Environment(\.dismiss) private var dismiss
 
     @State private var placeToRename: SavedPlace?
@@ -423,7 +309,7 @@ struct PlacesView: View {
 
     private func favoriteButton(_ place: SavedPlace) -> some View {
         Button {
-            session.teleport(to: place.coordinate, pairing: pairing)
+            session.teleport(to: place.coordinate)
             dismiss()
         } label: {
             Text(session.favoriteDisplayName(place))

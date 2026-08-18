@@ -122,8 +122,6 @@ final class SpoofSession: ObservableObject {
     @Published var recents: [SavedPlace] = []
     @Published var searchHistory: [SearchHistoryEntry] = []
 
-    private var resendTimer: Timer?
-    private var healthTimer: Timer?
     private var joystickTimer: Timer?
     private var routeTask: Task<Void, Never>?
     private var activeRoute: [CLLocationCoordinate2D] = []
@@ -295,15 +293,9 @@ final class SpoofSession: ObservableObject {
         return false
     }
 
-    func teleport(to coordinate: CLLocationCoordinate2D, pairing: PairingStore) {
-        guard pairing.hasPairingFile else {
-            lastError = "请先在设置中导入 RPPairing 文件。"
-            return
-        }
+    func teleport(to coordinate: CLLocationCoordinate2D) {
         pin = coordinate
-        Task { [weak self] in
-            _ = await self?.apply(coordinate, pairing: pairing, markRecent: true)
-        }
+        apply(coordinate, markRecent: true)
     }
 
     var isMoving: Bool { routeActive || joystickActive }
@@ -314,51 +306,27 @@ final class SpoofSession: ObservableObject {
     }
 
     /// First press while moving freezes at the current simulated coordinate.
-    /// A later press clears the developer-location override and returns to GPS.
-    func stop(pairing: PairingStore) {
+    /// A later press clears the location override and returns to GPS.
+    func stop() {
         if isMoving {
             stopMovement()
             return
         }
-        stopResend()
-        stopHealth()
-
-        guard LocalDevVPN.isConnected else {
+        isBusy = true
+        let result = LocationEngine.clear()
+        isBusy = false
+        switch result {
+        case .success:
             simulated = nil
             status = .idle
-            lastError = nil
             endBackground()
+            // Keep location updates running so the map puck / locate button
+            // can return to the real GPS fix (not the leftover pin).
             locationKeeper.start()
-            Task { await LocationEngine.invalidate() }
-            return
-        }
-
-        isBusy = true
-        Task { [weak self] in
-            guard let self else { return }
-            let result = await LocationEngine.clear()
-            isBusy = false
-            switch result {
-            case .success:
-                simulated = nil
-                status = .idle
-                endBackground()
-                // Keep location updates running so the map puck / locate button
-                // can return to the real GPS fix (not the leftover pin).
-                locationKeeper.start()
-            case .failure(let error):
-                if !LocalDevVPN.isConnected {
-                    simulated = nil
-                    status = .idle
-                    lastError = nil
-                    endBackground()
-                    locationKeeper.start()
-                } else {
-                    lastError = error.localizedDescription
-                    status = .dropped(error.localizedDescription)
-                    postDropNotification(error.localizedDescription)
-                }
-            }
+        case .failure(let error):
+            lastError = error.localizedDescription
+            status = .dropped(error.localizedDescription)
+            postDropNotification(error.localizedDescription)
         }
     }
 
@@ -377,11 +345,7 @@ final class SpoofSession: ObservableObject {
         locationKeeper.start()
     }
 
-    func startJoystick(pairing: PairingStore) {
-        guard pairing.hasPairingFile else {
-            lastError = "请先在设置中导入 RPPairing 文件。"
-            return
-        }
+    func startJoystick() {
         routeTask?.cancel()
         routeTask = nil
         routeActive = false
@@ -396,18 +360,15 @@ final class SpoofSession: ObservableObject {
             lastError = "使用摇杆前请先放置图钉或开始模拟定位。"
             return
         }
-        Task { [weak self] in
-            guard let self else { return }
-            if simulated == nil,
-               !(await apply(start, pairing: pairing, markRecent: false)) {
-                return
-            }
-            joystickActive = true
-            joystickTimer?.invalidate()
-            joystickTimer = Timer.scheduledTimer(withTimeInterval: 0.25, repeats: true) { [weak self] _ in
-                Task { @MainActor in
-                    await self?.tickJoystick(pairing: pairing)
-                }
+        if simulated == nil,
+           !apply(start, markRecent: false) {
+            return
+        }
+        joystickActive = true
+        joystickTimer?.invalidate()
+        joystickTimer = Timer.scheduledTimer(withTimeInterval: 0.25, repeats: true) { [weak self] _ in
+            Task { @MainActor in
+                self?.tickJoystick()
             }
         }
     }
@@ -426,7 +387,7 @@ final class SpoofSession: ObservableObject {
         stopJoystick()
     }
 
-    func resumeRoute(pairing: PairingStore) {
+    func resumeRoute() {
         guard canResumeRoute, let current = simulated else { return }
         let nearest = activeRoute.indices.min { lhs, rhs in
             Self.distance(from: current, to: activeRoute[lhs]) < Self.distance(from: current, to: activeRoute[rhs])
@@ -434,7 +395,7 @@ final class SpoofSession: ObservableObject {
         var remaining = [current]
         remaining.append(contentsOf: activeRoute[nearest...])
         guard remaining.count >= 2 else { return }
-        startRoute(remaining, pairing: pairing, preserveOriginalRoute: true)
+        startRoute(remaining, preserveOriginalRoute: true)
     }
 
     func stopJoystick() {
@@ -457,19 +418,18 @@ final class SpoofSession: ObservableObject {
         routeElapsedTime = 0
     }
 
-    func followRoute(_ coordinates: [CLLocationCoordinate2D], pairing: PairingStore) {
-        guard pairing.hasPairingFile, coordinates.count >= 2 else { return }
+    func followRoute(_ coordinates: [CLLocationCoordinate2D]) {
+        guard coordinates.count >= 2 else { return }
         activeRoute = coordinates
         routeProgress = 0
         routeLap = 0
         routeDistanceTraveled = 0
         routeElapsedTime = 0
-        startRoute(coordinates, pairing: pairing, preserveOriginalRoute: true)
+        startRoute(coordinates, preserveOriginalRoute: true)
     }
 
     private func startRoute(
         _ coordinates: [CLLocationCoordinate2D],
-        pairing: PairingStore,
         preserveOriginalRoute: Bool
     ) {
         routeGeneration = UUID()
@@ -489,7 +449,7 @@ final class SpoofSession: ObservableObject {
                 self.routeLap = lap
                 var previous = coordinates[0]
                 var emittedCoordinate = previous
-                guard await self.apply(previous, pairing: pairing, markRecent: firstPass) else { break }
+                guard self.apply(previous, markRecent: firstPass) else { break }
                 firstPass = false
 
                 for (segmentIndex, next) in coordinates.dropFirst().enumerated() {
@@ -513,7 +473,7 @@ final class SpoofSession: ObservableObject {
                         self.routeDistanceTraveled += Self.distance(from: emittedCoordinate, to: coord)
                         self.routeElapsedTime += delay
                         emittedCoordinate = coord
-                        guard await self.apply(coord, pairing: pairing, markRecent: false) else { break }
+                        guard self.apply(coord, markRecent: false) else { break }
                         self.routeProgress = min(1, (Double(segmentIndex) + t) / Double(max(1, coordinates.count - 1)))
                     }
                     previous = next
@@ -721,18 +681,14 @@ final class SpoofSession: ObservableObject {
         return false
     }
 
+    @discardableResult
     private func apply(
         _ coordinate: CLLocationCoordinate2D,
-        pairing: PairingStore,
         markRecent: Bool
-    ) async -> Bool {
+    ) -> Bool {
         guard CLLocationCoordinate2DIsValid(coordinate),
               coordinate.latitude.isFinite, coordinate.longitude.isFinite else {
             lastError = "所选地图坐标无效，请重新放置图钉。"
-            return false
-        }
-        guard LocalDevVPN.isConnected else {
-            handleTunnelUnavailable()
             return false
         }
         guard !isBusy else {
@@ -743,11 +699,9 @@ final class SpoofSession: ObservableObject {
         }
         isBusy = true
         let systemCoordinate = ChinaCoordinateTransform.mapCoordinateToSystemCoordinate(coordinate)
-        let result = await LocationEngine.set(
+        let result = LocationEngine.set(
             latitude: systemCoordinate.latitude,
-            longitude: systemCoordinate.longitude,
-            pairingPath: pairing.pairingPath,
-            deviceIP: TunnelConfig.targetIP
+            longitude: systemCoordinate.longitude
         )
         isBusy = false
         switch result {
@@ -758,18 +712,12 @@ final class SpoofSession: ObservableObject {
             lastError = nil
             beginBackground()
             locationKeeper.start()
-            startResend(pairing: pairing)
-            startHealth(pairing: pairing)
             if markRecent {
                 locationSummaryRevision &+= 1
                 pushRecent(coordinate)
             }
             return true
         case .failure(let error):
-            if !LocalDevVPN.isConnected {
-                handleTunnelUnavailable()
-                return false
-            }
             lastError = error.localizedDescription
             if simulated != nil {
                 status = .dropped(error.localizedDescription)
@@ -781,7 +729,7 @@ final class SpoofSession: ObservableObject {
         }
     }
 
-    private func tickJoystick(pairing: PairingStore) async {
+    private func tickJoystick() {
         guard joystickActive, let current = simulated else { return }
         let magnitude = hypot(joystickVector.dx, joystickVector.dy)
         guard magnitude > 0.08 else { return }
@@ -791,72 +739,7 @@ final class SpoofSession: ObservableObject {
         let dt = 0.25
         let meters = speed * dt
         let next = offset(coordinate: current, eastMeters: nx * meters, northMeters: ny * meters)
-        _ = await apply(next, pairing: pairing, markRecent: false)
-    }
-
-    private func startResend(pairing: PairingStore) {
-        resendTimer?.invalidate()
-        resendTimer = Timer.scheduledTimer(withTimeInterval: 8, repeats: true) { [weak self] _ in
-            Task { @MainActor in
-                guard let self, let sim = self.simulated else { return }
-                guard LocalDevVPN.isConnected else {
-                    self.handleTunnelUnavailable()
-                    return
-                }
-                let systemCoordinate = ChinaCoordinateTransform.mapCoordinateToSystemCoordinate(sim)
-                let result = await LocationEngine.set(
-                    latitude: systemCoordinate.latitude,
-                    longitude: systemCoordinate.longitude,
-                    pairingPath: pairing.pairingPath,
-                    deviceIP: TunnelConfig.targetIP
-                )
-                if case .failure = result, !LocalDevVPN.isConnected {
-                    self.handleTunnelUnavailable()
-                }
-            }
-        }
-    }
-
-    private func stopResend() {
-        resendTimer?.invalidate()
-        resendTimer = nil
-    }
-
-    private func startHealth(pairing: PairingStore) {
-        healthTimer?.invalidate()
-        healthTimer = Timer.scheduledTimer(withTimeInterval: 12, repeats: true) { [weak self] _ in
-            Task { @MainActor in
-                guard let self, let sim = self.simulated else { return }
-                guard LocalDevVPN.isConnected else {
-                    self.handleTunnelUnavailable()
-                    return
-                }
-                if case .dropped = self.status {
-                    self.status = .reconnecting
-                    _ = await self.apply(sim, pairing: pairing, markRecent: false)
-                } else if !(await LocationEngine.isSessionActive()), self.isSpoofing {
-                    self.status = .reconnecting
-                    _ = await self.apply(sim, pairing: pairing, markRecent: false)
-                }
-            }
-        }
-    }
-
-    private func handleTunnelUnavailable() {
-        isBusy = false
-        lastError = nil
-        stopResend()
-        stopHealth()
-        if routeActive || joystickActive {
-            stopMovement()
-        }
-        status = simulated == nil ? .idle : .dropped("")
-        Task { await LocationEngine.invalidate() }
-    }
-
-    private func stopHealth() {
-        healthTimer?.invalidate()
-        healthTimer = nil
+        _ = apply(next, markRecent: false)
     }
 
     private func pushRecent(_ coordinate: CLLocationCoordinate2D) {

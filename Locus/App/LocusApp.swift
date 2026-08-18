@@ -3,12 +3,11 @@ import SwiftUI
 @main
 struct LocusApp: App {
     @StateObject private var session = SpoofSession()
-    @StateObject private var pairing = PairingStore()
     @AppStorage(SetupGate.defaultsKey) private var setupComplete = false
 
-    /// Map when setup finished, or when already paired outside this walkthrough.
+    /// Map when setup is finished.
     private var showMap: Bool {
-        setupComplete || (pairing.hasPairingFile && !SetupGate.isInProgress)
+        setupComplete
     }
 
     var body: some Scene {
@@ -17,23 +16,16 @@ struct LocusApp: App {
                 if showMap {
                     RootView()
                 } else {
-                    SetupFlowView(initialStep: SetupGate.initialStep(hasPairingFile: pairing.hasPairingFile)) {
+                    SetupFlowView {
                         SetupGate.markComplete()
                         setupComplete = true
                     }
                 }
             }
             .environmentObject(session)
-            .environmentObject(pairing)
             .preferredColorScheme(session.appearanceMode.colorScheme)
             .onOpenURL { url in
                 handleIncoming(url)
-            }
-            .onAppear {
-                if !setupComplete, pairing.hasPairingFile, !SetupGate.isInProgress {
-                    SetupGate.markComplete()
-                    setupComplete = true
-                }
             }
         }
     }
@@ -42,14 +34,11 @@ struct LocusApp: App {
         if url.scheme == "locus", url.host == "stop" {
             session.stopJoystick()
             session.discardRoute()
-            session.stop(pairing: pairing)
+            session.stop()
             return
         }
 
-        let ext = url.pathExtension.lowercased()
-        if ["plist", "mobiledevicepairing", "mobiledevicepair"].contains(ext) {
-            try? pairing.importPairing(from: url)
-        } else if ext == "gpx" {
+        if url.pathExtension.lowercased() == "gpx" {
             NotificationCenter.default.post(name: .locusImportGPX, object: url)
         }
     }

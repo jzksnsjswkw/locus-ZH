@@ -17,7 +17,6 @@ enum MapChromeLayout {
 
 struct RootView: View {
     @EnvironmentObject private var session: SpoofSession
-    @EnvironmentObject private var pairing: PairingStore
     @State private var showSettings = false
     @State private var showPlaces = false
     @State private var favoriteRenameSuggestion: SavedPlace?
@@ -121,7 +120,7 @@ struct RootView: View {
         } message: {
             Text("输入一个方便识别的地点名称。")
         }
-        .onChange(of: favoriteRenameSuggestion?.id) { _, favoriteID in
+        .onChange(of: favoriteRenameSuggestion?.id) { favoriteID in
             favoriteRenameTask?.cancel()
             guard let favoriteID else { return }
             favoriteRenameTask = Task {
@@ -326,21 +325,17 @@ struct RootView: View {
 
 struct StatusBarView: View {
     @EnvironmentObject private var session: SpoofSession
-    @Environment(\.scenePhase) private var scenePhase
     @ObservedObject var mapDataSourceDetector: MapDataSourceDetector
 
     @StateObject private var locationSummary = MapLocationSummary()
-    @State private var tunnelConnected = LocalDevVPN.isConnected
     @State private var showLocationDetails = false
 
     private enum Display {
         case notSpoofing
-        case connectVPN
         case status(String)
     }
 
     private var display: Display {
-        guard tunnelConnected else { return .connectVPN }
         switch session.status {
         case .idle:
             return .notSpoofing
@@ -359,8 +354,6 @@ struct StatusBarView: View {
         switch display {
         case .notSpoofing:
             return Color.primary.opacity(0.55)
-        case .connectVPN:
-            return LocusTheme.statusWarn
         case .status:
             switch session.status {
             case .active: return LocusTheme.statusGood
@@ -374,7 +367,6 @@ struct StatusBarView: View {
     private var title: String {
         switch display {
         case .notSpoofing: return "未模拟定位"
-        case .connectVPN: return "点击连接 LocalDevVPN"
         case .status(let text): return text
         }
     }
@@ -392,53 +384,37 @@ struct StatusBarView: View {
             }
         }
         .onAppear {
-            refreshTunnel()
             syncLiveActivity()
             updateLocationSummary()
         }
-        .onChange(of: scenePhase) { _, phase in
-            if phase == .active { refreshTunnel() }
-        }
-        .onChange(of: session.status) { _, _ in
-            refreshTunnel()
+        .onChange(of: session.status) { _ in
             syncLiveActivity()
         }
-        .onChange(of: session.routeActive) { _, active in
+        .onChange(of: session.routeActive) { active in
             if active {
                 locationSummary.suspend()
             }
             syncLiveActivity()
         }
-        .onChange(of: session.routePaused) { _, paused in
+        .onChange(of: session.routePaused) { paused in
             if paused {
                 locationSummary.suspend()
             }
             syncLiveActivity()
         }
-        .onChange(of: session.simulated?.latitude) { _, _ in
+        .onChange(of: session.simulated?.latitude) { _ in
             syncLiveActivity()
         }
-        .onChange(of: session.simulated?.longitude) { _, _ in
+        .onChange(of: session.simulated?.longitude) { _ in
             syncLiveActivity()
         }
-        .onChange(of: session.locationSummaryRevision) { _, _ in
+        .onChange(of: session.locationSummaryRevision) { _ in
             updateLocationSummary(force: true)
-        }
-        .onReceive(NotificationCenter.default.publisher(for: .NEVPNStatusDidChange)) { _ in
-            // LocalDevVPN connection changes show up here even though we don’t own the VPN.
-            refreshTunnel()
         }
         .onReceive(NotificationCenter.default.publisher(for: .locusDismissStatusDetails)) { _ in
             guard showLocationDetails else { return }
             withAnimation(.easeOut(duration: 0.18)) {
                 showLocationDetails = false
-            }
-        }
-        .task(id: scenePhase) {
-            guard scenePhase == .active else { return }
-            while !Task.isCancelled {
-                try? await Task.sleep(nanoseconds: 2_000_000_000)
-                refreshTunnel()
             }
         }
     }
@@ -457,28 +433,22 @@ struct StatusBarView: View {
                         .foregroundStyle(.primary)
                         .lineLimit(1)
 
-                    if !tunnelConnected {
-                        Image(systemName: "lock.shield.fill")
-                            .font(.caption.weight(.semibold))
-                            .foregroundStyle(LocusTheme.accent)
+                    if locationSummary.coordinate != nil {
+                        Text(locationSummary.shortText)
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                            .lineLimit(1)
                     }
                 }
-
-                if tunnelConnected, locationSummary.coordinate != nil {
-                    Text(locationSummary.shortText)
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
-                        .lineLimit(1)
-                }
+                .padding(.horizontal, 14)
+                .padding(.vertical, 10)
+                .fixedSize(horizontal: true, vertical: false)
+                .locusGlass(.clear, in: RoundedRectangle(cornerRadius: 18, style: .continuous))
+                .contentShape(RoundedRectangle(cornerRadius: 18, style: .continuous))
             }
-            .padding(.horizontal, 14)
-            .padding(.vertical, 10)
-            .fixedSize(horizontal: true, vertical: false)
-            .locusGlass(.clear, in: RoundedRectangle(cornerRadius: 18, style: .continuous))
-            .contentShape(RoundedRectangle(cornerRadius: 18, style: .continuous))
+            .buttonStyle(.plain)
+            .accessibilityLabel(title)
         }
-        .buttonStyle(.plain)
-        .accessibilityLabel(tunnelConnected ? title : "点击连接 LocalDevVPN")
     }
 
     private var locationDetailsCard: some View {
@@ -612,26 +582,11 @@ struct StatusBarView: View {
     }
 
     private func handleStatusTap() {
-        if !tunnelConnected {
-            showLocationDetails = false
-            UIImpactFeedbackGenerator(style: .light).impactOccurred()
-            LocalDevVPN.openOrInstall()
-            return
-        }
-
         guard locationSummary.coordinate != nil else { return }
         UISelectionFeedbackGenerator().selectionChanged()
         withAnimation(.spring(response: 0.32, dampingFraction: 0.82)) {
             showLocationDetails.toggle()
         }
-    }
-
-    private func refreshTunnel() {
-        let connected = LocalDevVPN.isConnected
-        if !connected, showLocationDetails {
-            showLocationDetails = false
-        }
-        tunnelConnected = connected
     }
 
     private func updateLocationSummary(force: Bool = false) {
@@ -870,12 +825,8 @@ private final class MapLocationSummary: ObservableObject {
 
 struct BottomControlsView: View {
     @EnvironmentObject private var session: SpoofSession
-    @EnvironmentObject private var pairing: PairingStore
-    @Environment(\.scenePhase) private var scenePhase
     @Binding var showSettings: Bool
     @Binding var showRouteSheet: Bool
-
-    @State private var tunnelConnected = LocalDevVPN.isConnected
 
     private let trayShape = RoundedRectangle(cornerRadius: 30, style: .continuous)
 
@@ -943,20 +894,6 @@ struct BottomControlsView: View {
             NotificationCenter.default.post(name: .locusDismissStatusDetails, object: nil)
         })
         .animation(.easeOut(duration: 0.18), value: session.joystickActive)
-        .onAppear(perform: refreshTunnelConnection)
-        .onChange(of: scenePhase) { _, phase in
-            if phase == .active { refreshTunnelConnection() }
-        }
-        .onReceive(NotificationCenter.default.publisher(for: .NEVPNStatusDidChange)) { _ in
-            refreshTunnelConnection()
-        }
-        .task(id: scenePhase) {
-            guard scenePhase == .active else { return }
-            while !Task.isCancelled {
-                try? await Task.sleep(for: .seconds(2))
-                refreshTunnelConnection()
-            }
-        }
     }
 
     private var routeRuntimeOptions: some View {
@@ -1039,7 +976,7 @@ struct BottomControlsView: View {
             if session.joystickActive {
                 session.stopJoystick()
             } else {
-                session.startJoystick(pairing: pairing)
+                session.startJoystick()
             }
         } label: {
             Image(systemName: "circle.grid.cross.fill")
@@ -1073,11 +1010,11 @@ struct BottomControlsView: View {
             .contentShape(Capsule())
         }
         .buttonStyle(.plain)
-        .disabled(tunnelConnected && !session.isSpoofing && session.isBusy)
+        .disabled(!session.isSpoofing && session.isBusy)
         .contextMenu {
             if session.canResumeRoute {
                 Button(role: .destructive) {
-                    session.stop(pairing: pairing)
+                    session.stop()
                 } label: {
                     Label("停止定位", systemImage: "stop.fill")
                 }
@@ -1098,7 +1035,7 @@ struct BottomControlsView: View {
             HStack(spacing: 6) {
                 Button {
                     UIImpactFeedbackGenerator(style: .light).impactOccurred()
-                    session.stop(pairing: pairing)
+                    session.stop()
                 } label: {
                     Text("停止")
                         .font(.subheadline.weight(.bold))
@@ -1115,7 +1052,7 @@ struct BottomControlsView: View {
                         return
                     }
                     UIImpactFeedbackGenerator(style: .light).impactOccurred()
-                    session.teleport(to: target, pairing: pairing)
+                    session.teleport(to: target)
                 } label: {
                     Text("应用当前位置")
                         .font(.subheadline.weight(.bold))
@@ -1144,7 +1081,7 @@ struct BottomControlsView: View {
                         .locusGlass(.interactive, tint: startControlColor, in: Capsule())
                 }
                 .buttonStyle(.plain)
-                .disabled(tunnelConnected && (session.crosshairCoordinate == nil || session.isBusy))
+                .disabled(session.crosshairCoordinate == nil || session.isBusy)
 
                 Button {
                     UIImpactFeedbackGenerator(style: .light).impactOccurred()
@@ -1180,7 +1117,7 @@ struct BottomControlsView: View {
 
             Button {
                 UIImpactFeedbackGenerator(style: .light).impactOccurred()
-                session.resumeRoute(pairing: pairing)
+                session.resumeRoute()
             } label: {
                 Text("继续")
                     .font(.subheadline.weight(.bold))
@@ -1201,52 +1138,35 @@ struct BottomControlsView: View {
     }
 
     private var sessionControlColor: Color {
-        if !tunnelConnected && !session.isSpoofing { return .gray }
-        return session.isSpoofing && !session.canResumeRoute ? LocusTheme.danger : LocusTheme.accent
+        session.isSpoofing && !session.canResumeRoute ? LocusTheme.danger : LocusTheme.accent
     }
 
     private var sessionControlForegroundColor: Color {
-        if !tunnelConnected && !session.isSpoofing { return .white.opacity(0.82) }
-        return session.isSpoofing && !session.canResumeRoute ? .white : .black
+        session.isSpoofing && !session.canResumeRoute ? .white : .black
     }
 
     private var startControlColor: Color {
-        tunnelConnected ? LocusTheme.accent : .gray
+        LocusTheme.accent
     }
 
     private var startControlForegroundColor: Color {
-        tunnelConnected ? .black : .white.opacity(0.82)
+        .black
     }
 
     private func performSessionAction() {
         if session.canResumeRoute {
-            session.resumeRoute(pairing: pairing)
+            session.resumeRoute()
         } else if session.isSpoofing {
-            session.stop(pairing: pairing)
+            session.stop()
         } else {
-            guard requireConnectedTunnel() else { return }
             guard let target = session.selectedTargetCoordinate else {
                 session.lastError = session.targetSelectionMode == .crosshair
                     ? "尚未取得准星位置，请先移动地图。"
                     : "请先点击地图放置图钉。"
                 return
             }
-            session.teleport(to: target, pairing: pairing)
+            session.teleport(to: target)
         }
-    }
-
-    private func requireConnectedTunnel() -> Bool {
-        let connected = LocalDevVPN.isConnected
-        tunnelConnected = connected
-        guard connected else {
-            session.lastError = "请先连接LocalDevVPN"
-            return false
-        }
-        return true
-    }
-
-    private func refreshTunnelConnection() {
-        tunnelConnected = LocalDevVPN.isConnected
     }
 
     private func trayIcon(_ systemName: String, action: @escaping () -> Void) -> some View {

@@ -3,7 +3,6 @@ import SwiftUI
 
 struct MapHomeView: View {
     @EnvironmentObject private var session: SpoofSession
-    @EnvironmentObject private var pairing: PairingStore
     @Environment(\.scenePhase) private var scenePhase
     @Binding var showPlaces: Bool
     @Binding var favoriteRenameSuggestion: SavedPlace?
@@ -18,7 +17,14 @@ struct MapHomeView: View {
     @StateObject private var search = PlaceSearchCompleter()
     @StateObject private var mapDataSourceDetector = MapDataSourceDetector()
     @Namespace private var rightLowerControlNamespace
-    @State private var position: MapCameraPosition = .userLocation(fallback: .automatic)
+    @State private var region: MKCoordinateRegion = MKCoordinateRegion(
+        center: CLLocationCoordinate2D(latitude: 37.3349, longitude: -122.0090),
+        latitudinalMeters: 2000,
+        longitudinalMeters: 2000
+    )
+    /// Bumped by the locate button so LocusMapView eases the camera over 0.35s.
+    @State private var animateRegionToken = 0
+    @State private var mapView: MKMapView?
     @State private var searchText = ""
     @FocusState private var searchFocused: Bool
     @State private var routeStart: CLLocationCoordinate2D?
@@ -26,9 +32,6 @@ struct MapHomeView: View {
     @State private var routeWaypoints: [CLLocationCoordinate2D] = []
     @State private var routeCoords: [CLLocationCoordinate2D] = []
     @State private var routeIsHandDrawn = false
-    @State private var routeCameraRevision: UInt = 0
-    @State private var visibleRegion: MKCoordinateRegion?
-    @State private var visibleCamera: MapCamera?
     @State private var edgeZoomStartRegion: MKCoordinateRegion?
     @State private var lastLocationButtonTap: Date?
     @State private var isRouting = false
@@ -42,20 +45,23 @@ struct MapHomeView: View {
     @State private var selectedFavoriteID: String?
     @State private var isDraggingPin = false
     @State private var suppressNextMapTap = false
-    @State private var mapLongPressActivated = false
-    @State private var mapLongPressTask: Task<Void, Never>?
-    @State private var mapPressStartPoint: CGPoint?
     @State private var favoriteToast: String?
     @State private var favoriteToastTask: Task<Void, Never>?
     @State private var searchNamedCoordinate: CLLocationCoordinate2D?
     @State private var confirmClearSearchHistory = false
     /// Set when the pin comes from search / a named place so starring keeps the title.
     @State private var pinPlaceName: String?
+    /// Bumped once the map region settles so the marker overlays re-evaluate their
+    /// converted points against the final viewport (search-placed pins land
+    /// off-screen otherwise, because the body re-renders before updateUIView
+    /// applies the new region).
+    @State private var regionSettledToken = 0
 
-    private var mapStyle: MapStyle {
+    private var mapType: MKMapType {
         switch session.mapStyleIndex {
-        case 1: return .hybrid(elevation: .realistic)
-        default: return .standard(elevation: .realistic)
+        case 1: return .hybrid
+        case 2: return .satellite
+        default: return .standard
         }
     }
 
@@ -65,104 +71,7 @@ struct MapHomeView: View {
 
     private var mapSurface: some View {
         ZStack(alignment: .top) {
-            // Keep Map inside the safe layout bounds so MapProxy.convert matches
-            // finger position. Ignoring the safe area makes the tiles full-bleed but
-            // shifts convert() upward by ~status-bar height.
-            MapReader { proxy in
-                Map(position: $position) {
-                    mapContent(proxy: proxy)
-                }
-                .mapStyle(mapStyle)
-                .mapControlVisibility(.hidden)
-                .onMapCameraChange(frequency: .continuous) { _ in
-                    if session.mapStyleIndex != 0,
-                       routeCoords.count > 1 || drawnPath.count > 1 {
-                        routeCameraRevision &+= 1
-                    }
-                }
-                .onMapCameraChange(frequency: .onEnd) { context in
-                    visibleRegion = context.region
-                    visibleCamera = context.camera
-                    session.saveMapRegion(context.region)
-                    if session.targetSelectionMode == .crosshair {
-                        session.crosshairCoordinate = context.region.center
-                        if let named = searchNamedCoordinate,
-                           CLLocation(latitude: named.latitude, longitude: named.longitude)
-                            .distance(from: CLLocation(
-                                latitude: context.region.center.latitude,
-                                longitude: context.region.center.longitude
-                            )) > 15 {
-                            pinPlaceName = nil
-                            searchNamedCoordinate = nil
-                        }
-                    }
-                }
-                .onTapGesture { point in
-                    dismissStatusDetails()
-                    searchFocused = false
-                    searchPresented = false
-                    guard !suppressNextMapTap, !isDraggingPin else { return }
-                    pinSelected = false
-                    pinExpandedActions = false
-                    selectedFavoriteID = nil
-                    placePin(at: point, proxy: proxy)
-                }
-                .simultaneousGesture(mapLongPressGesture(proxy: proxy))
-                .overlay(alignment: .topLeading) {
-                    MapDataSourceProbe(detector: mapDataSourceDetector)
-                        .frame(width: 1, height: 1)
-                        .allowsHitTesting(false)
-                        .accessibilityHidden(true)
-                }
-                .overlay {
-                    if session.mapStyleIndex != 0 {
-                        ZStack {
-                            if routeOptions.isEmpty, routeCoords.count > 1 {
-                                ScreenFixedRouteOverlay(
-                                    coordinates: routeCoords,
-                                    proxy: proxy,
-                                    cameraRevision: routeCameraRevision,
-                                    color: presentedRouteColor,
-                                    strokeStyle: presentedRouteStrokeStyle
-                                )
-                            }
-                            ForEach(routeOptions.filter { $0.id != selectedRouteOptionID }) { option in
-                                ScreenFixedRouteOverlay(
-                                    coordinates: option.coordinates,
-                                    proxy: proxy,
-                                    cameraRevision: routeCameraRevision,
-                                    color: unselectedRouteColor,
-                                    strokeStyle: StrokeStyle(lineWidth: 4, lineCap: .round, lineJoin: .round)
-                                )
-                            }
-                            if let selectedPlannedRoute {
-                                ScreenFixedRouteOverlay(
-                                    coordinates: selectedPlannedRoute.coordinates,
-                                    proxy: proxy,
-                                    cameraRevision: routeCameraRevision,
-                                    color: selectedRouteColor,
-                                    strokeStyle: StrokeStyle(lineWidth: 6, lineCap: .round, lineJoin: .round)
-                                )
-                            }
-                            if drawnPath.count > 1 {
-                                ScreenFixedRouteOverlay(
-                                    coordinates: drawnPath,
-                                    proxy: proxy,
-                                    cameraRevision: routeCameraRevision,
-                                    color: LocusTheme.accentSecondary,
-                                    strokeStyle: StrokeStyle(
-                                        lineWidth: 4,
-                                        lineCap: .round,
-                                        lineJoin: .round,
-                                        dash: [6, 4]
-                                    )
-                                )
-                            }
-                        }
-                    }
-                }
-            }
-            .background(Color(uiColor: .systemBackground).ignoresSafeArea())
+            mapLayer
 
             if session.targetSelectionMode == .crosshair, !drawMode, !searchPresented {
                 crosshairTarget
@@ -215,38 +124,85 @@ struct MapHomeView: View {
                     .transition(.move(edge: .top).combined(with: .opacity))
                     .zIndex(3)
             }
-
         }
+    }
+
+    /// Map + marker overlays share one coordinate space so MKMapView point
+    /// conversions line up with SwiftUI `.position`. The map stays inside the
+    /// safe layout bounds so conversions match finger position — ignoring the
+    /// safe area would make the tiles full-bleed but shift conversions upward
+    /// by ~status-bar height.
+    private var mapLayer: some View {
+        ZStack {
+            LocusMapView(
+                region: $region,
+                mapType: mapType,
+                animateRegionToken: animateRegionToken,
+                simulated: session.simulated,
+                routeCoords: routeCoords,
+                routeColor: mainRouteColor,
+                routeLineWidth: mainRouteLineWidth,
+                routeDashed: mainRouteDashed,
+                alternativeRouteCoords: alternativeRouteCoords,
+                drawnPath: drawnPath,
+                onMapViewCreated: { mapView in
+                    // makeUIView runs during SwiftUI's view-update phase;
+                    // writing @State here is dropped, so defer to the next runloop.
+                    DispatchQueue.main.async {
+                        self.mapView = mapView
+                    }
+                },
+                onMapTap: handleMapTap,
+                onMapLongPress: handleMapLongPress,
+                onRegionSettled: handleRegionSettled
+            )
+            // Fill the container explicitly: a UIViewRepresentable has no
+            // intrinsic size, and in a ZStack it can collapse to zero frame
+            // on iOS 16 (sizeThatFits behavior), leaving a black screen.
+            .frame(maxWidth: .infinity, maxHeight: .infinity)
+
+            simulatedMarkerOverlay
+            favoriteMarkersOverlay
+            pinOverlay
+            waypointMarkersOverlay
+            routeEndpointMarkersOverlay
+
+            MapDataSourceProbe(detector: mapDataSourceDetector)
+                .frame(width: 1, height: 1)
+                .allowsHitTesting(false)
+                .accessibilityHidden(true)
+                .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+        }
+        .background(Color.black.ignoresSafeArea())
     }
 
     private var mapLifecycle: some View {
         mapSurface
         .onAppear {
             session.startLocationUpdates()
-            if session.restoreLastMapView, let region = session.savedMapRegion() {
-                position = .region(region)
-                visibleRegion = region
+            generatedRouteReady = routeReadyState
+            drawingRouteActive = drawMode
+            drawingRoutePointCount = drawnPath.count
+            if session.restoreLastMapView, let saved = session.savedMapRegion() {
+                region = saved
                 if session.targetSelectionMode == .crosshair {
-                    session.crosshairCoordinate = region.center
+                    session.crosshairCoordinate = saved.center
                 }
             } else if session.targetSelectionMode == .crosshair,
                       session.crosshairCoordinate == nil {
                 session.crosshairCoordinate = session.pin ?? session.simulated ?? session.realMapCoordinate
             }
         }
-        .onChange(of: routeReadyState, initial: true) { _, ready in
+        .onChange(of: routeReadyState) { ready in
             generatedRouteReady = ready
         }
-        .onChange(of: drawMode, initial: true) { _, active in
+        .onChange(of: drawMode) { active in
             drawingRouteActive = active
         }
-        .onChange(of: drawnPath.count, initial: true) { _, count in
+        .onChange(of: drawnPath.count) { count in
             drawingRoutePointCount = count
         }
         .onDisappear {
-            mapLongPressTask?.cancel()
-            mapLongPressTask = nil
-            mapPressStartPoint = nil
             favoriteToastTask?.cancel()
             favoriteToastTask = nil
             favoriteToast = nil
@@ -260,7 +216,7 @@ struct MapHomeView: View {
 
     private var mapInteractions: some View {
         mapLifecycle
-        .onChange(of: searchPresented) { _, presented in
+        .onChange(of: searchPresented) { presented in
             if presented {
                 pinSelected = false
                 pinExpandedActions = false
@@ -272,13 +228,13 @@ struct MapHomeView: View {
                 searchFocused = false
             }
         }
-        .onChange(of: session.pin?.latitude) { _, newValue in
+        .onChange(of: session.pin?.latitude) { newValue in
             if newValue == nil {
                 pinSelected = false
                 pinExpandedActions = false
             }
         }
-        .onChange(of: session.status) { _, status in
+        .onChange(of: session.status) { status in
             if case .idle = status {
                 clearRoutePresentation()
             }
@@ -300,24 +256,24 @@ struct MapHomeView: View {
         .onReceive(NotificationCenter.default.publisher(for: .locusBuildRouteToTarget)) { _ in
             buildRouteToCurrentTarget()
         }
-        .onChange(of: session.targetSelectionMode) { _, mode in
+        .onChange(of: session.targetSelectionMode) { mode in
             closePinActions()
             if mode == .crosshair {
-                session.crosshairCoordinate = visibleRegion?.center ?? session.pin ?? session.simulated ?? session.realMapCoordinate
+                session.crosshairCoordinate = session.pin ?? session.simulated ?? session.realMapCoordinate
             }
         }
-        .onChange(of: selectedRouteOptionID) { _, selectedID in
+        .onChange(of: selectedRouteOptionID) { selectedID in
             guard let selectedID,
                   let option = routeOptions.first(where: { $0.id == selectedID }) else { return }
             routeCoords = option.coordinates
         }
-        .onChange(of: simulatedCoordinateKey) { _, _ in
+        .onChange(of: simulatedCoordinateKey) { _ in
             followSimulatedLocationIfNeeded()
         }
-        .onChange(of: session.locationSummaryRevision) { _, _ in
+        .onChange(of: session.locationSummaryRevision) { _ in
             mapDataSourceDetector.redetect()
         }
-        .onChange(of: scenePhase) { _, phase in
+        .onChange(of: scenePhase) { phase in
             if phase == .active {
                 mapDataSourceDetector.scheduleDetection()
             }
@@ -366,50 +322,31 @@ struct MapHomeView: View {
         }
     }
 
-    @MapContentBuilder
-    private func mapContent(proxy: MapProxy) -> some MapContent {
-        UserAnnotation()
-        favoriteAnnotations
-        pinAnnotation(proxy: proxy)
+    // MARK: - Marker overlays (positioned via MKMapView coordinate conversion)
 
-        if let sim = session.simulated {
-            Annotation("模拟位置", coordinate: sim) {
-                ZStack {
-                    Circle().fill(LocusTheme.accent.opacity(0.25)).frame(width: 44, height: 44)
-                    Circle().fill(LocusTheme.accent).frame(width: 14, height: 14)
-                        .overlay(Circle().stroke(.white, lineWidth: 2))
-                }
+    @ViewBuilder
+    private var simulatedMarkerOverlay: some View {
+        if let mapView, let sim = session.simulated {
+            // Re-evaluate when the region settles so markers track the final viewport.
+            let _ = regionSettledToken
+            let point = mapView.convert(sim, toPointTo: mapView)
+            ZStack {
+                Circle().fill(LocusTheme.accent.opacity(0.25)).frame(width: 44, height: 44)
+                Circle().fill(LocusTheme.accent).frame(width: 14, height: 14)
+                    .overlay(Circle().stroke(.white, lineWidth: 2))
             }
-        }
-
-        ForEach(routeWaypoints.indices, id: \.self) { index in
-            Annotation("途经点 \(index + 1)", coordinate: routeWaypoints[index], anchor: .bottom) {
-                RouteWaypointMarker(number: index + 1)
-            }
-        }
-
-        routeLineContent
-
-        if let start = drawMode ? drawnPath.first : drawnRouteStart {
-            Annotation("手绘轨迹起点", coordinate: start) {
-                RouteEndpointMarker(color: .green, systemImage: "play.fill")
-            }
-        }
-        if !drawMode, let end = drawnRouteEnd {
-            Annotation("手绘轨迹终点", coordinate: end) {
-                RouteEndpointMarker(color: .red, systemImage: "stop.fill")
-            }
+            .position(x: point.x, y: point.y)
+            .allowsHitTesting(false)
+            .accessibilityHidden(true)
         }
     }
 
-    @MapContentBuilder
-    private var favoriteAnnotations: some MapContent {
-        ForEach(session.favorites) { favorite in
-            Annotation(
-                "",
-                coordinate: favorite.coordinate,
-                anchor: UnitPoint(x: 0.5, y: 0.76)
-            ) {
+    @ViewBuilder
+    private var favoriteMarkersOverlay: some View {
+        if let mapView {
+            let _ = regionSettledToken
+            ForEach(session.favorites) { favorite in
+                let point = mapView.convert(favorite.coordinate, toPointTo: mapView)
                 FavoriteMapMarker(
                     selected: selectedFavoriteID == favorite.id,
                     onSelect: {
@@ -439,137 +376,205 @@ struct MapHomeView: View {
                 .accessibilityHint(session.targetSelectionMode == .crosshair
                                    ? "轻点显示删除按钮"
                                    : "半秒内松手可切换模拟位置，按住半秒显示删除按钮")
+                // Mirrors the old Annotation anchor: UnitPoint(x: 0.5, y: 0.76).
+                // The 160x92 frame is bottom-aligned; the anchor point sits
+                // 0.76 * 92 = 69.92 from the top, i.e. 22.08 above the bottom edge.
+                // Positioning the frame center at point.y - 24 puts that point
+                // on the coordinate.
+                .frame(width: 160, height: 92, alignment: .bottom)
+                .position(x: point.x, y: point.y - 24)
             }
         }
     }
 
-    @MapContentBuilder
-    private func pinAnnotation(proxy: MapProxy) -> some MapContent {
-        if session.targetSelectionMode == .pin,
+    @ViewBuilder
+    private var pinOverlay: some View {
+        if let mapView,
+           session.targetSelectionMode == .pin,
            let pin = session.pin,
            session.favorite(at: pin) == nil {
-            Annotation("", coordinate: pin, anchor: .bottom) {
-                MapDropPin(
-                    selected: pinSelected,
-                    expandedActions: pinExpandedActions,
-                    isDragging: isDraggingPin,
-                    onSelect: {
-                        dismissStatusDetails()
-                        searchFocused = false
-                        suppressNextMapTap = true
-                        selectedFavoriteID = nil
-                        withAnimation(.spring(response: 0.28, dampingFraction: 0.78)) {
-                            pinSelected = false
-                            pinExpandedActions = false
-                        }
-                        DispatchQueue.main.asyncAfter(deadline: .now() + 0.05) {
-                            suppressNextMapTap = false
-                        }
-                    },
-                    onShowExpandedActions: {
-                        dismissStatusDetails()
-                        searchFocused = false
-                        suppressNextMapTap = true
-                        selectedFavoriteID = nil
-                        withAnimation(.spring(response: 0.28, dampingFraction: 0.78)) {
-                            pinSelected = true
-                            pinExpandedActions = true
-                        }
-                        DispatchQueue.main.asyncAfter(deadline: .now() + 0.08) {
-                            suppressNextMapTap = false
-                        }
-                    },
-                    onRemove: {
-                        dismissStatusDetails()
-                        suppressNextMapTap = true
-                        withAnimation {
-                            session.pin = nil
-                            pinSelected = false
-                            pinExpandedActions = false
-                        }
-                        DispatchQueue.main.asyncAfter(deadline: .now() + 0.05) {
-                            suppressNextMapTap = false
-                        }
-                    },
-                    onBuildRouteToPin: buildRouteToCurrentTarget,
-                    onDragBegan: {
-                        dismissStatusDetails()
-                        searchFocused = false
-                        suppressNextMapTap = true
-                        pinPlaceName = nil
+            let _ = regionSettledToken
+            let point = mapView.convert(pin, toPointTo: mapView)
+            MapDropPin(
+                selected: pinSelected,
+                expandedActions: pinExpandedActions,
+                isDragging: isDraggingPin,
+                onSelect: {
+                    dismissStatusDetails()
+                    searchFocused = false
+                    suppressNextMapTap = true
+                    selectedFavoriteID = nil
+                    withAnimation(.spring(response: 0.28, dampingFraction: 0.78)) {
                         pinSelected = false
                         pinExpandedActions = false
-                        isDraggingPin = true
-                    },
-                    onDragMoved: { globalPoint in
-                        if let coord = proxy.convert(globalPoint, from: .global) {
-                            session.pin = coord
-                        }
-                    },
-                    onDragEnded: {
-                        isDraggingPin = false
-                        DispatchQueue.main.asyncAfter(deadline: .now() + 0.15) {
-                            suppressNextMapTap = false
-                        }
                     }
-                )
+                    DispatchQueue.main.asyncAfter(deadline: .now() + 0.05) {
+                        suppressNextMapTap = false
+                    }
+                },
+                onShowExpandedActions: {
+                    dismissStatusDetails()
+                    searchFocused = false
+                    suppressNextMapTap = true
+                    selectedFavoriteID = nil
+                    withAnimation(.spring(response: 0.28, dampingFraction: 0.78)) {
+                        pinSelected = true
+                        pinExpandedActions = true
+                    }
+                    DispatchQueue.main.asyncAfter(deadline: .now() + 0.08) {
+                        suppressNextMapTap = false
+                    }
+                },
+                onRemove: {
+                    dismissStatusDetails()
+                    suppressNextMapTap = true
+                    withAnimation {
+                        session.pin = nil
+                        pinSelected = false
+                        pinExpandedActions = false
+                    }
+                    DispatchQueue.main.asyncAfter(deadline: .now() + 0.05) {
+                        suppressNextMapTap = false
+                    }
+                },
+                onBuildRouteToPin: buildRouteToCurrentTarget,
+                onDragBegan: {
+                    dismissStatusDetails()
+                    searchFocused = false
+                    suppressNextMapTap = true
+                    pinPlaceName = nil
+                    pinSelected = false
+                    pinExpandedActions = false
+                    isDraggingPin = true
+                },
+                onDragMoved: { globalPoint in
+                    // MapDropPin drags report window coordinates; MKMapView
+                    // converts those straight to a map coordinate.
+                    session.pin = mapView.convert(globalPoint, toCoordinateFrom: nil)
+                },
+                onDragEnded: {
+                    isDraggingPin = false
+                    DispatchQueue.main.asyncAfter(deadline: .now() + 0.15) {
+                        suppressNextMapTap = false
+                    }
+                }
+            )
+            // Anchor the pin tip on the coordinate: the 200x102 frame is
+            // bottom-aligned and positioned so its bottom-center sits on the
+            // converted point (mirrors the old Annotation anchor: .bottom).
+            .frame(width: 200, height: 102, alignment: .bottom)
+            .position(x: point.x, y: point.y - 51)
+        }
+    }
+
+    @ViewBuilder
+    private var waypointMarkersOverlay: some View {
+        if let mapView {
+            let _ = regionSettledToken
+            ForEach(routeWaypoints.indices, id: \.self) { index in
+                let point = mapView.convert(routeWaypoints[index], toPointTo: mapView)
+                RouteWaypointMarker(number: index + 1)
+                    .frame(width: 38, height: 44, alignment: .bottom)
+                    .position(x: point.x, y: point.y - 22)
+                    .allowsHitTesting(false)
             }
         }
     }
 
-    @MapContentBuilder
-    private var routeLineContent: some MapContent {
-        if session.mapStyleIndex == 0 {
-            if routeOptions.isEmpty {
-                if routeCoords.count > 1 {
-                    MapPolyline(coordinates: routeCoords)
-                        .stroke(presentedRouteColor, style: presentedRouteStrokeStyle)
-                }
-            } else {
-                ForEach(routeOptions.filter { $0.id != selectedRouteOptionID }) { option in
-                    MapPolyline(coordinates: option.coordinates)
-                        .stroke(unselectedRouteColor, lineWidth: 4)
-                }
-                if let selectedPlannedRoute {
-                    MapPolyline(coordinates: selectedPlannedRoute.coordinates)
-                        .stroke(selectedRouteColor, lineWidth: 6)
-                }
+    @ViewBuilder
+    private var routeEndpointMarkersOverlay: some View {
+        if let mapView {
+            let _ = regionSettledToken
+            if let start = drawMode ? drawnPath.first : drawnRouteStart {
+                let point = mapView.convert(start, toPointTo: mapView)
+                RouteEndpointMarker(color: .green, systemImage: "play.fill")
+                    .position(x: point.x, y: point.y)
+                    .allowsHitTesting(false)
+                    .accessibilityHidden(true)
             }
-        }
-
-        if drawnPath.count > 1, session.mapStyleIndex == 0 {
-            MapPolyline(coordinates: drawnPath)
-                .stroke(LocusTheme.accentSecondary, style: StrokeStyle(lineWidth: 4, dash: [6, 4]))
+            if !drawMode, let end = drawnRouteEnd {
+                let point = mapView.convert(end, toPointTo: mapView)
+                RouteEndpointMarker(color: .red, systemImage: "stop.fill")
+                    .position(x: point.x, y: point.y)
+                    .allowsHitTesting(false)
+                    .accessibilityHidden(true)
+            }
         }
     }
 
-    private func placePin(at point: CGPoint, proxy: MapProxy) {
-        guard let coord = proxy.convert(point, from: .local) else { return }
-        if drawMode {
-            drawnPath.append(coord)
+    // MARK: - Map interactions
+
+    private func handleMapTap(_ coordinate: CLLocationCoordinate2D) {
+        dismissStatusDetails()
+        searchFocused = false
+        searchPresented = false
+        guard !suppressNextMapTap, !isDraggingPin else { return }
+        pinSelected = false
+        pinExpandedActions = false
+        selectedFavoriteID = nil
+        placePin(at: coordinate)
+    }
+
+    private func handleMapLongPress(_ coordinate: CLLocationCoordinate2D) {
+        guard !hitsInteractiveMarker(at: coordinate) else { return }
+        if canAddRouteWaypoint,
+           ChinaCoordinateTransform.usesMainlandChinaOffset(coordinate) {
+            suppressNextMapTap = true
+            routeWaypoints.append(coordinate)
+            UIImpactFeedbackGenerator(style: .medium).impactOccurred()
+            showFavoriteToast("已添加途经点 \(routeWaypoints.count)，正在重新规划")
+            buildRoadRoute()
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) {
+                suppressNextMapTap = false
+            }
         } else if session.targetSelectionMode == .pin {
-            session.pin = coord
+            placeExpandedPin(at: coordinate)
+        }
+    }
+
+    private func handleRegionSettled() {
+        regionSettledToken += 1
+        session.saveMapRegion(region)
+        if session.targetSelectionMode == .crosshair {
+            session.crosshairCoordinate = region.center
+            if let named = searchNamedCoordinate,
+               CLLocation(latitude: named.latitude, longitude: named.longitude)
+                .distance(from: CLLocation(
+                    latitude: region.center.latitude,
+                    longitude: region.center.longitude
+                )) > 15 {
+                pinPlaceName = nil
+                searchNamedCoordinate = nil
+            }
+        }
+    }
+
+    private func placePin(at coordinate: CLLocationCoordinate2D) {
+        if drawMode {
+            drawnPath.append(coordinate)
+        } else if session.targetSelectionMode == .pin {
+            session.pin = coordinate
             pinPlaceName = nil
             pinSelected = false
         }
     }
 
-    private func placeExpandedPin(at point: CGPoint, proxy: MapProxy) {
+    private func placeExpandedPin(at coordinate: CLLocationCoordinate2D) {
         guard session.targetSelectionMode == .pin,
               !drawMode,
               !suppressNextMapTap,
               !isDraggingPin else { return }
-        if let pin = session.pin,
-           let anchor = proxy.convert(pin, to: .local) {
+        if let pin = session.pin, let mapView {
+            let anchor = mapView.convert(pin, toPointTo: mapView)
             let pinHitArea = CGRect(
                 x: anchor.x - 36,
                 y: anchor.y - 72,
                 width: 72,
                 height: 88
             )
+            let point = mapView.convert(coordinate, toPointTo: mapView)
             guard !pinHitArea.contains(point) else { return }
         }
-        guard let coordinate = proxy.convert(point, from: .local) else { return }
         suppressNextMapTap = true
         searchFocused = false
         searchPresented = false
@@ -586,35 +591,19 @@ struct MapHomeView: View {
         }
     }
 
-    private func handleMapLongPress(at point: CGPoint, proxy: MapProxy) {
-        guard !hitsInteractiveMarker(at: point, proxy: proxy),
-              let coordinate = proxy.convert(point, from: .local) else { return }
-        if canAddRouteWaypoint,
-           ChinaCoordinateTransform.usesMainlandChinaOffset(coordinate) {
-            suppressNextMapTap = true
-            routeWaypoints.append(coordinate)
-            UIImpactFeedbackGenerator(style: .medium).impactOccurred()
-            showFavoriteToast("已添加途经点 \(routeWaypoints.count)，正在重新规划")
-            buildRoadRoute()
-            DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) {
-                suppressNextMapTap = false
-            }
-        } else if session.targetSelectionMode == .pin {
-            placeExpandedPin(at: point, proxy: proxy)
-        }
-    }
-
-    private func hitsInteractiveMarker(at point: CGPoint, proxy: MapProxy) -> Bool {
+    private func hitsInteractiveMarker(at coordinate: CLLocationCoordinate2D) -> Bool {
+        guard let mapView else { return false }
+        let point = mapView.convert(coordinate, toPointTo: mapView)
         if session.favorites.contains(where: { favorite in
-            guard let markerPoint = proxy.convert(favorite.coordinate, to: .local) else { return false }
+            let markerPoint = mapView.convert(favorite.coordinate, toPointTo: mapView)
             return hypot(markerPoint.x - point.x, markerPoint.y - point.y) <= 36
         }) {
             return true
         }
 
         if session.targetSelectionMode == .pin,
-           let pin = session.pin,
-           let markerPoint = proxy.convert(pin, to: .local) {
+           let pin = session.pin {
+            let markerPoint = mapView.convert(pin, toPointTo: mapView)
             let hitArea = CGRect(
                 x: markerPoint.x - 36,
                 y: markerPoint.y - 76,
@@ -625,44 +614,6 @@ struct MapHomeView: View {
         }
 
         return false
-    }
-
-    private func mapLongPressGesture(proxy: MapProxy) -> some Gesture {
-        DragGesture(minimumDistance: 0, coordinateSpace: .local)
-            .onChanged { value in
-                if mapPressStartPoint == nil {
-                    let startPoint = value.startLocation
-                    mapPressStartPoint = startPoint
-                    mapLongPressTask?.cancel()
-                    mapLongPressTask = Task { @MainActor in
-                        try? await Task.sleep(for: .seconds(0.5))
-                        guard !Task.isCancelled,
-                              mapPressStartPoint != nil,
-                              !mapLongPressActivated else { return }
-                        mapLongPressActivated = true
-                        dismissStatusDetails()
-                        handleMapLongPress(at: startPoint, proxy: proxy)
-                    }
-                }
-
-                let movement = max(abs(value.translation.width), abs(value.translation.height))
-                if movement > 12, !mapLongPressActivated {
-                    mapLongPressTask?.cancel()
-                    mapLongPressTask = nil
-                }
-            }
-            .onEnded { _ in
-                mapLongPressTask?.cancel()
-                mapLongPressTask = nil
-                mapPressStartPoint = nil
-                if mapLongPressActivated {
-                    suppressNextMapTap = true
-                    mapLongPressActivated = false
-                    DispatchQueue.main.asyncAfter(deadline: .now() + 0.25) {
-                        suppressNextMapTap = false
-                    }
-                }
-            }
     }
 
     private var topChrome: some View {
@@ -699,7 +650,7 @@ struct MapHomeView: View {
                     searchFocused = false
                     searchTextDirectly()
                 }
-                .onChange(of: searchText) { _, value in
+                .onChange(of: searchText) { value in
                     search.region = searchRegion
                     search.query = value
                 }
@@ -998,10 +949,26 @@ struct MapHomeView: View {
         routeIsHandDrawn ? LocusTheme.accentSecondary : LocusTheme.accent
     }
 
-    private var presentedRouteStrokeStyle: StrokeStyle {
-        routeIsHandDrawn
-            ? StrokeStyle(lineWidth: 4, lineCap: .round, lineJoin: .round, dash: [6, 4])
-            : StrokeStyle(lineWidth: 5, lineCap: .round, lineJoin: .round)
+    /// The route overlay style depends on whether alternatives exist:
+    /// - No alternatives: the presented route (hand-drawn dashed vs. accent solid).
+    /// - With alternatives: the selected option in dark green.
+    private var mainRouteColor: Color {
+        routeOptions.isEmpty ? presentedRouteColor : selectedRouteColor
+    }
+
+    private var mainRouteLineWidth: CGFloat {
+        if routeOptions.isEmpty { return routeIsHandDrawn ? 4 : 5 }
+        return 6
+    }
+
+    private var mainRouteDashed: Bool {
+        routeOptions.isEmpty && routeIsHandDrawn
+    }
+
+    private var alternativeRouteCoords: [[CLLocationCoordinate2D]] {
+        routeOptions
+            .filter { $0.id != selectedRouteOptionID }
+            .map(\.coordinates)
     }
 
     private var currentPinIsFavorite: Bool {
@@ -1013,34 +980,28 @@ struct MapHomeView: View {
     /// never the leftover teleport pin (`.automatic` would frame that marker).
     private func goToCurrentLocation() {
         let recenterDistance: CLLocationDistance = 750
-        let currentHeading = visibleCamera?.heading ?? 0
-        let currentPitch = visibleCamera?.pitch ?? 0
-        withAnimation(.easeInOut(duration: 0.35)) {
-            if session.isSpoofing, let sim = session.simulated {
-                position = .camera(MapCamera(
-                    centerCoordinate: sim,
-                    distance: recenterDistance,
-                    heading: currentHeading,
-                    pitch: currentPitch
-                ))
-            } else if let real = session.realMapCoordinate {
-                position = .camera(MapCamera(
-                    centerCoordinate: real,
-                    distance: recenterDistance,
-                    heading: currentHeading,
-                    pitch: currentPitch
-                ))
-            } else {
-                position = .userLocation(
-                    followsHeading: false,
-                    fallback: .region(MKCoordinateRegion(
-                        center: CLLocationCoordinate2D(latitude: 37.3349, longitude: -122.0090),
-                        latitudinalMeters: 2000,
-                        longitudinalMeters: 2000
-                    ))
-                )
-            }
+        let newRegion: MKCoordinateRegion
+        if session.isSpoofing, let sim = session.simulated {
+            newRegion = MKCoordinateRegion(
+                center: sim,
+                latitudinalMeters: recenterDistance,
+                longitudinalMeters: recenterDistance
+            )
+        } else if let real = session.realMapCoordinate {
+            newRegion = MKCoordinateRegion(
+                center: real,
+                latitudinalMeters: recenterDistance,
+                longitudinalMeters: recenterDistance
+            )
+        } else {
+            newRegion = MKCoordinateRegion(
+                center: CLLocationCoordinate2D(latitude: 37.3349, longitude: -122.0090),
+                latitudinalMeters: 2000,
+                longitudinalMeters: 2000
+            )
         }
+        animateRegionToken += 1
+        region = newRegion
     }
 
     private func handleLocationButtonTap() {
@@ -1056,22 +1017,19 @@ struct MapHomeView: View {
     }
 
     private func faceMapNorth() {
-        guard let camera = visibleCamera else {
+        guard let camera = mapView?.camera else {
             goToCurrentLocation()
             return
         }
-        withAnimation(.easeInOut(duration: 0.3)) {
-            position = .camera(MapCamera(
-                centerCoordinate: camera.centerCoordinate,
-                distance: camera.distance,
-                heading: 0,
-                pitch: camera.pitch
-            ))
-        }
+        animateRegionToken += 1
+        region = MKCoordinateRegion(
+            center: camera.centerCoordinate,
+            span: region.span
+        )
     }
 
     private func beginEdgeZoom() {
-        edgeZoomStartRegion = visibleRegion
+        edgeZoomStartRegion = region
     }
 
     private func updateEdgeZoom(_ verticalTranslation: CGFloat) {
@@ -1079,13 +1037,13 @@ struct MapHomeView: View {
         let scale = pow(2, Double(verticalTranslation / 120))
         let latitudeDelta = min(120, max(0.0005, start.span.latitudeDelta * scale))
         let longitudeDelta = min(360, max(0.0005, start.span.longitudeDelta * scale))
-        position = .region(MKCoordinateRegion(
+        region = MKCoordinateRegion(
             center: start.center,
             span: MKCoordinateSpan(
                 latitudeDelta: latitudeDelta,
                 longitudeDelta: longitudeDelta
             )
-        ))
+        )
     }
 
     private func endEdgeZoom() {
@@ -1131,10 +1089,10 @@ struct MapHomeView: View {
         session.pin = favorite.coordinate
         if session.targetSelectionMode == .crosshair {
             session.crosshairCoordinate = favorite.coordinate
-            let span = visibleRegion?.span ?? MKCoordinateSpan(latitudeDelta: 0.012, longitudeDelta: 0.012)
-            position = .region(MKCoordinateRegion(center: favorite.coordinate, span: span))
+            let span = region.span
+            region = MKCoordinateRegion(center: favorite.coordinate, span: span)
         }
-        session.teleport(to: favorite.coordinate, pairing: pairing)
+        session.teleport(to: favorite.coordinate)
         DispatchQueue.main.asyncAfter(deadline: .now() + 0.15) {
             suppressNextMapTap = false
         }
@@ -1205,8 +1163,8 @@ struct MapHomeView: View {
         guard session.autoFollowRoute,
               session.routeActive,
               let simulated = session.simulated else { return }
-        let span = visibleRegion?.span ?? MKCoordinateSpan(latitudeDelta: 0.012, longitudeDelta: 0.012)
-        position = .region(MKCoordinateRegion(center: simulated, span: span))
+        let span = region.span
+        region = MKCoordinateRegion(center: simulated, span: span)
     }
 
     private func showFavoriteToast(_ message: String) {
@@ -1286,11 +1244,12 @@ struct MapHomeView: View {
         } else {
             session.crosshairCoordinate = coordinate
         }
-        position = .region(MKCoordinateRegion(
+        animateRegionToken += 1
+        region = MKCoordinateRegion(
             center: coordinate,
             latitudinalMeters: 1200,
             longitudinalMeters: 1200
-        ))
+        )
         searchText = ""
         search.query = ""
         searchFocused = false
@@ -1349,13 +1308,13 @@ struct MapHomeView: View {
             return
         }
         showRouteSheet = false
-        session.followRoute(path, pairing: pairing)
+        session.followRoute(path)
     }
 
     private func runGeneratedRoute() {
         UIImpactFeedbackGenerator(style: .light).impactOccurred()
         if session.canResumeRoute {
-            session.resumeRoute(pairing: pairing)
+            session.resumeRoute()
         } else {
             playRoute()
         }
@@ -1452,7 +1411,7 @@ struct MapHomeView: View {
             routeCoords = RouteBuilder.sample(coordinates: coords, every: 10)
             if let first = coords.first {
                 session.pin = first
-                position = .region(MKCoordinateRegion(center: first, latitudinalMeters: 2000, longitudinalMeters: 2000))
+                region = MKCoordinateRegion(center: first, latitudinalMeters: 2000, longitudinalMeters: 2000)
             }
         } catch {
             session.lastError = error.localizedDescription
@@ -1566,8 +1525,8 @@ private struct FavoriteMapMarker: View {
                 .transition(.scale(scale: 0.9, anchor: .bottom).combined(with: .opacity))
             }
         }
-        // The delete button remains inside this frame, so Map cannot receive it
-        // as a background tap and create a replacement pin.
+        // The delete button remains inside this frame, so the map cannot receive
+        // it as a background tap and create a replacement pin.
         .frame(width: 160, height: 92, alignment: .bottom)
         .animation(.spring(response: 0.28, dampingFraction: 0.8), value: selected)
         .animation(.easeOut(duration: 0.12), value: isPressing)
@@ -1660,58 +1619,252 @@ private struct RouteWaypointMarker: View {
     }
 }
 
-private struct ScreenFixedRouteOverlay: View {
-    let coordinates: [CLLocationCoordinate2D]
-    let proxy: MapProxy
-    let cameraRevision: UInt
-    let color: Color
-    let strokeStyle: StrokeStyle
+// MARK: - MKMapView bridge (iOS 16)
 
-    var body: some View {
-        Canvas { context, _ in
-            _ = cameraRevision
-            guard coordinates.count > 1 else { return }
+/// UIViewRepresentable wrapping MKMapView so the map works on iOS 16, where the
+/// SwiftUI Map / MapReader / MapCameraPosition API is unavailable.
+struct LocusMapView: UIViewRepresentable {
+    @Binding var region: MKCoordinateRegion
+    var mapType: MKMapType
+    /// Bump to ease the next region change over 0.35s (locate button).
+    var animateRegionToken: Int
+    var simulated: CLLocationCoordinate2D?
+    var routeCoords: [CLLocationCoordinate2D]
+    var routeColor: Color
+    var routeLineWidth: CGFloat
+    var routeDashed: Bool
+    var alternativeRouteCoords: [[CLLocationCoordinate2D]]
+    var drawnPath: [CLLocationCoordinate2D]
+    var onMapViewCreated: (MKMapView) -> Void
+    var onMapTap: (CLLocationCoordinate2D) -> Void
+    var onMapLongPress: (CLLocationCoordinate2D) -> Void
+    var onRegionSettled: (() -> Void)?
 
-            let maximumDisplayPoints = 2_000
-            let step = max(1, Int(ceil(Double(coordinates.count - 1) / Double(maximumDisplayPoints - 1))))
-            var path = Path()
-            var hasCurrentPoint = false
-            var lastSampledIndex = -1
-            var index = 0
+    func makeCoordinator() -> Coordinator {
+        let coordinator = Coordinator(self)
+        coordinator.onRegionSettled = onRegionSettled
+        return coordinator
+    }
 
-            while index < coordinates.count {
-                if let point = proxy.convert(coordinates[index], to: .local) {
-                    if hasCurrentPoint {
-                        path.addLine(to: point)
-                    } else {
-                        path.move(to: point)
-                        hasCurrentPoint = true
-                    }
-                } else {
-                    hasCurrentPoint = false
-                }
-                lastSampledIndex = index
-                index += step
-            }
+    func makeUIView(context: Context) -> MKMapView {
+        // Create with a real frame (not .zero): on iOS 16, VectorKit's Metal
+        // canvas initializes against the creation geometry and never recovers
+        // from a zero frame, leaving a black map. Using the screen bounds gives
+        // the renderer a valid canvas from the start.
+        let mapView = MKMapView(frame: UIScreen.main.bounds)
+        // Style is driven via mapView.mapType, NOT preferredConfiguration:
+        // switching preferredConfiguration on iOS 16 corrupts VectorKit's
+        // renderer ("Tracking renderables for inactive registry", SO 77818532)
+        // and leaves a black map. mapType is soft-deprecated but works reliably
+        // on iOS 16 and is what Geranium-style apps use.
+        mapView.delegate = context.coordinator
+        mapView.showsUserLocation = true
+        mapView.showsCompass = false
+        mapView.showsScale = false
+        // Do NOT call setRegion here: at this point the view still has a zero
+        // frame (it has not been laid out yet), and applying a region against
+        // empty geometry can leave the map renderer in a broken black state.
+        // The initial region is applied in updateUIView once bounds are valid.
 
-            let finalIndex = coordinates.count - 1
-            if lastSampledIndex != finalIndex,
-               let finalPoint = proxy.convert(coordinates[finalIndex], to: .local) {
-                if hasCurrentPoint {
-                    path.addLine(to: finalPoint)
-                } else {
-                    path.move(to: finalPoint)
-                }
-            }
+        let tap = UITapGestureRecognizer(target: context.coordinator, action: #selector(Coordinator.mapTapped(_:)))
+        tap.cancelsTouchesInView = false
+        tap.delaysTouchesBegan = false
+        mapView.addGestureRecognizer(tap)
 
-            context.stroke(
-                path,
-                with: .color(color),
-                style: strokeStyle
-            )
+        // Long-press: waypoint insertion (mainland China) / expanded pin actions.
+        let longPress = UILongPressGestureRecognizer(target: context.coordinator, action: #selector(Coordinator.mapLongPressed(_:)))
+        longPress.minimumPressDuration = 0.5
+        longPress.cancelsTouchesInView = false
+        longPress.delaysTouchesBegan = false
+        mapView.addGestureRecognizer(longPress)
+
+        // MKMapView's internal recognizers (double-tap-to-zoom etc.) cancel touches by
+        // default, which swallows the first tap on SwiftUI buttons overlaid on the map.
+        // Disabling cancellation lets the button's touch sequence survive arbitration.
+        Self.disableTouchCancellation(in: mapView)
+
+        onMapViewCreated(mapView)
+        return mapView
+    }
+
+    func updateUIView(_ mapView: MKMapView, context: Context) {
+        context.coordinator.parent = self
+
+        // Only touch the map type when the requested one changed; re-assigning
+        // it on every update churns MapKit's VectorKit renderer and can blank
+        // the map (iOS 16.x).
+        if mapView.mapType != mapType {
+            mapView.mapType = mapType
         }
-        .allowsHitTesting(false)
-        .accessibilityHidden(true)
+
+        // Apply the initial region only once the view has a real frame.
+        if !context.coordinator.didSetInitialRegion, mapView.bounds.size != .zero {
+            context.coordinator.didSetInitialRegion = true
+            mapView.setRegion(region, animated: false)
+            context.coordinator.lastRegion = region
+        }
+
+        // Apply programmatic region changes only; never fight the user's pan.
+        if let last = context.coordinator.lastRegion, Self.regionDiffers(last, region) {
+            if context.coordinator.animateRegionToken != animateRegionToken {
+                UIView.animate(withDuration: 0.35, delay: 0, options: .curveEaseInOut) {
+                    mapView.setRegion(region, animated: false)
+                }
+            } else {
+                mapView.setRegion(region, animated: false)
+            }
+            context.coordinator.lastRegion = region
+        }
+        context.coordinator.animateRegionToken = animateRegionToken
+
+        // Spoofed-location marker.
+        if let simulated {
+            if let annotation = context.coordinator.spoofAnnotation {
+                annotation.coordinate = simulated
+            } else {
+                let annotation = MKPointAnnotation()
+                annotation.coordinate = simulated
+                mapView.addAnnotation(annotation)
+                context.coordinator.spoofAnnotation = annotation
+            }
+        } else if let annotation = context.coordinator.spoofAnnotation {
+            mapView.removeAnnotation(annotation)
+            context.coordinator.spoofAnnotation = nil
+        }
+
+        // Selected / presented route polyline.
+        if routeCoords.count > 1 {
+            if let overlay = context.coordinator.routeOverlay { mapView.removeOverlay(overlay) }
+            let polyline = MKPolyline(coordinates: routeCoords, count: routeCoords.count)
+            mapView.addOverlay(polyline)
+            context.coordinator.routeOverlay = polyline
+        } else if let overlay = context.coordinator.routeOverlay {
+            mapView.removeOverlay(overlay)
+            context.coordinator.routeOverlay = nil
+        }
+
+        // Alternative route polylines (unselected options).
+        for overlay in context.coordinator.alternativeOverlays {
+            mapView.removeOverlay(overlay)
+        }
+        context.coordinator.alternativeOverlays.removeAll()
+        for coords in alternativeRouteCoords where coords.count > 1 {
+            let polyline = MKPolyline(coordinates: coords, count: coords.count)
+            mapView.addOverlay(polyline)
+            context.coordinator.alternativeOverlays.append(polyline)
+        }
+
+        // Drawn path polyline (dashed).
+        if drawnPath.count > 1 {
+            if let overlay = context.coordinator.drawnOverlay { mapView.removeOverlay(overlay) }
+            let polyline = MKPolyline(coordinates: drawnPath, count: drawnPath.count)
+            mapView.addOverlay(polyline)
+            context.coordinator.drawnOverlay = polyline
+        } else if let overlay = context.coordinator.drawnOverlay {
+            mapView.removeOverlay(overlay)
+            context.coordinator.drawnOverlay = nil
+        }
+    }
+
+    private static func disableTouchCancellation(in view: UIView) {
+        view.gestureRecognizers?.forEach { $0.cancelsTouchesInView = false }
+        view.subviews.forEach { disableTouchCancellation(in: $0) }
+    }
+
+    private static func regionDiffers(_ lhs: MKCoordinateRegion, _ rhs: MKCoordinateRegion) -> Bool {
+        lhs.center.latitude != rhs.center.latitude
+            || lhs.center.longitude != rhs.center.longitude
+            || lhs.span.latitudeDelta != rhs.span.latitudeDelta
+            || lhs.span.longitudeDelta != rhs.span.longitudeDelta
+    }
+
+    final class Coordinator: NSObject, MKMapViewDelegate {
+        var parent: LocusMapView
+        var lastRegion: MKCoordinateRegion?
+        var didSetInitialRegion = false
+        var animateRegionToken = 0
+        var spoofAnnotation: MKPointAnnotation?
+        var routeOverlay: MKPolyline?
+        var alternativeOverlays: [MKPolyline] = []
+        var drawnOverlay: MKPolyline?
+        var onRegionSettled: (() -> Void)?
+
+        init(_ parent: LocusMapView) {
+            self.parent = parent
+        }
+
+        @objc func mapTapped(_ recognizer: UITapGestureRecognizer) {
+            guard let mapView = recognizer.view as? MKMapView else { return }
+            let coordinate = mapView.convert(recognizer.location(in: mapView), toCoordinateFrom: mapView)
+            parent.onMapTap(coordinate)
+        }
+
+        @objc func mapLongPressed(_ recognizer: UILongPressGestureRecognizer) {
+            guard recognizer.state == .began,
+                  let mapView = recognizer.view as? MKMapView else { return }
+            let coordinate = mapView.convert(recognizer.location(in: mapView), toCoordinateFrom: mapView)
+            parent.onMapLongPress(coordinate)
+        }
+
+        func mapView(_ mapView: MKMapView, regionDidChangeAnimated animated: Bool) {
+            lastRegion = mapView.region
+            parent.region = mapView.region
+            onRegionSettled?()
+        }
+
+        func mapView(_ mapView: MKMapView, viewFor annotation: MKAnnotation) -> MKAnnotationView? {
+            if annotation is MKUserLocation { return nil }
+            guard let spoof = spoofAnnotation, annotation === spoof else { return nil }
+            let identifier = "locus.spoof"
+            let view = mapView.dequeueReusableAnnotationView(withIdentifier: identifier)
+                ?? MKAnnotationView(annotation: annotation, reuseIdentifier: identifier)
+            view.annotation = annotation
+            view.isEnabled = false
+            view.canShowCallout = false
+
+            if view.subviews.isEmpty {
+                let outer = UIView(frame: CGRect(x: 0, y: 0, width: 44, height: 44))
+                outer.layer.cornerRadius = 22
+                outer.backgroundColor = UIColor(LocusTheme.accent).withAlphaComponent(0.25)
+
+                let inner = UIView(frame: CGRect(x: 15, y: 15, width: 14, height: 14))
+                inner.layer.cornerRadius = 7
+                inner.backgroundColor = UIColor(LocusTheme.accent)
+                inner.layer.borderWidth = 2
+                inner.layer.borderColor = UIColor.white.cgColor
+
+                outer.addSubview(inner)
+                view.addSubview(outer)
+            }
+            return view
+        }
+
+        func mapView(_ mapView: MKMapView, rendererFor overlay: MKOverlay) -> MKOverlayRenderer {
+            if let polyline = overlay as? MKPolyline {
+                let renderer = MKPolylineRenderer(polyline: polyline)
+                renderer.lineCap = .round
+                renderer.lineJoin = .round
+                if polyline === routeOverlay {
+                    renderer.strokeColor = UIColor(parent.routeColor)
+                    renderer.lineWidth = parent.routeLineWidth
+                    if parent.routeDashed {
+                        renderer.lineDashPattern = [6, 4]
+                    }
+                } else if alternativeOverlays.contains(where: { $0 === polyline }) {
+                    renderer.strokeColor = UIColor(
+                        Color(red: 0.39, green: 0.78, blue: 0.55)
+                            .opacity(0.72)
+                    )
+                    renderer.lineWidth = 4
+                } else if polyline === drawnOverlay {
+                    renderer.strokeColor = UIColor(LocusTheme.accentSecondary)
+                    renderer.lineWidth = 4
+                    renderer.lineDashPattern = [6, 4]
+                }
+                return renderer
+            }
+            return MKOverlayRenderer(overlay: overlay)
+        }
     }
 }
 

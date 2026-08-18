@@ -1,205 +1,68 @@
 import Foundation
-import idevice
+import CoreLocation
 
 enum LocationEngineError: LocalizedError {
-    case invalidIP
-    case pairingRead
-    case tunnelCreate
-    case remoteServer
-    case simulationCreate
     case locationSet
     case locationClear
     case notActive
 
     var errorDescription: String? {
         switch self {
-        case .invalidIP: return "隧道 IP 无效。请检查“设置”→“隧道 IP”（通常为 10.7.0.1）。"
-        case .pairingRead: return "无法读取 RPPairing 文件。请使用 idevice_pair 的 RPPairing 模式生成该文件。"
-        case .tunnelCreate: return "无法打开开发者隧道。请确认已通过 Wi‑Fi 连接 LocalDevVPN。"
-        case .remoteServer: return "已连接隧道，但 RemoteXPC 握手失败。"
-        case .simulationCreate: return "无法打开 Apple 定位模拟服务。"
-        case .locationSet: return "无法设置模拟坐标。"
-        case .locationClear: return "无法清除模拟位置。"
-        case .notActive: return "当前没有活动的模拟定位会话。"
-        }
-    }
-
-    static func from(code: Int32) -> LocationEngineError {
-        switch code {
-        case 1: return .invalidIP
-        case 2: return .pairingRead
-        case 3: return .tunnelCreate
-        case 9: return .remoteServer
-        case 10: return .simulationCreate
-        case 11: return .locationSet
-        case 12: return .locationClear
-        default: return .locationSet
+        case .locationSet: return "Failed to set simulated coordinates."
+        case .locationClear: return "Failed to clear simulated location."
+        case .notActive: return "No active simulation session."
         }
     }
 }
 
-/// Thin Swift wrapper around idevice’s DVT location simulation (injects into locationd).
+/// Thin Swift wrapper around CLSimulationManager — the same private API Geranium,
+/// Andromeda and udevs' locsim use to inject coordinates into locationd system-wide.
+/// Requires the com.apple.locationd.simulation entitlement (TrollStore preserves it).
+/// No pairing file, no developer tunnel, no Developer Mode needed.
 enum LocationEngine {
     private static let queue = DispatchQueue(label: "com.chrismack.locus.location", qos: .userInitiated)
 
-    private static var adapter: OpaquePointer?
-    private static var handshake: OpaquePointer?
-    private static var remoteServer: OpaquePointer?
-    private static var locationSimulation: OpaquePointer?
+    private static let simManager = CLSimulationManager()
+    private static var active = false
 
-    private static let ok: Int32 = 0
-    private static let invalidIP: Int32 = 1
-    private static let pairingRead: Int32 = 2
-    private static let tunnelCreate: Int32 = 3
-    private static let remoteServerCode: Int32 = 9
-    private static let simulationCreate: Int32 = 10
-    private static let locationSet: Int32 = 11
-    private static let locationClear: Int32 = 12
+    static var isSessionActive: Bool { active }
 
-    static func isSessionActive() async -> Bool {
-        await withCheckedContinuation { continuation in
-            queue.async {
-                continuation.resume(returning: locationSimulation != nil)
-            }
+    static func set(latitude: Double, longitude: Double) -> Result<Void, LocationEngineError> {
+        var result: Result<Void, LocationEngineError> = .failure(.locationSet)
+        queue.sync {
+            let location = CLLocation(latitude: latitude, longitude: longitude)
+            simManager.stopLocationSimulation()
+            simManager.clearSimulatedLocations()
+            simManager.appendSimulatedLocation(location)
+            simManager.flush()
+            simManager.startLocationSimulation()
+            postTimezoneUpdate()
+            active = true
+            result = .success(())
         }
+        return result
     }
 
-    static func set(
-        latitude: Double,
-        longitude: Double,
-        pairingPath: String,
-        deviceIP: String
-    ) async -> Result<Void, LocationEngineError> {
-        await withCheckedContinuation { continuation in
-            queue.async {
-                let code = setLocked(
-                    latitude: latitude,
-                    longitude: longitude,
-                    pairingPath: pairingPath,
-                    deviceIP: deviceIP
-                )
-                let result: Result<Void, LocationEngineError> = code == ok
-                    ? .success(())
-                    : .failure(.from(code: code))
-                continuation.resume(returning: result)
-            }
+    static func clear() -> Result<Void, LocationEngineError> {
+        var result: Result<Void, LocationEngineError> = .failure(.notActive)
+        queue.sync {
+            simManager.stopLocationSimulation()
+            simManager.clearSimulatedLocations()
+            simManager.flush()
+            postTimezoneUpdate()
+            active = false
+            result = .success(())
         }
+        return result
     }
 
-    static func clear() async -> Result<Void, LocationEngineError> {
-        await withCheckedContinuation { continuation in
-            queue.async {
-                let code = clearLocked()
-                let result: Result<Void, LocationEngineError> = code == ok
-                    ? .success(())
-                    : .failure(.from(code: code))
-                continuation.resume(returning: result)
-            }
-        }
-    }
-
-    static func invalidate() async {
-        await withCheckedContinuation { continuation in
-            queue.async {
-                cleanup()
-                continuation.resume()
-            }
-        }
-    }
-
-    private static func cleanup() {
-        if let locationSimulation {
-            location_simulation_free(locationSimulation)
-            self.locationSimulation = nil
-        }
-        if let remoteServer {
-            remote_server_free(remoteServer)
-            self.remoteServer = nil
-        }
-        if let handshake {
-            rsd_handshake_free(handshake)
-            self.handshake = nil
-        }
-        if let adapter {
-            adapter_free(adapter)
-            self.adapter = nil
-        }
-    }
-
-    private static func setLocked(latitude: Double, longitude: Double, pairingPath: String, deviceIP: String) -> Int32 {
-        if let locationSimulation {
-            if let err = location_simulation_set(locationSimulation, latitude, longitude) {
-                idevice_error_free(err)
-                cleanup()
-            } else {
-                return ok
-            }
-        }
-
-        var address = sockaddr_in()
-        address.sin_family = sa_family_t(AF_INET)
-        address.sin_port = in_port_t(49152).bigEndian
-        let inetResult = deviceIP.withCString { inet_pton(AF_INET, $0, &address.sin_addr) }
-        guard inetResult == 1 else { return invalidIP }
-
-        var pairingHandle: OpaquePointer?
-        if let pairingError = pairingPath.withCString({ rp_pairing_file_read($0, &pairingHandle) }) {
-            idevice_error_free(pairingError)
-            return pairingRead
-        }
-        guard let pairingHandle else { return pairingRead }
-        defer { rp_pairing_file_free(pairingHandle) }
-
-        let providerError = withUnsafePointer(to: &address) { pointer in
-            pointer.withMemoryRebound(to: sockaddr.self, capacity: 1) {
-                tunnel_create_rppairing(
-                    $0,
-                    socklen_t(MemoryLayout<sockaddr_in>.stride),
-                    "LocusLocation",
-                    pairingHandle,
-                    nil,
-                    nil,
-                    &adapter,
-                    &handshake
-                )
-            }
-        }
-        if let providerError {
-            idevice_error_free(providerError)
-            cleanup()
-            return tunnelCreate
-        }
-
-        if let remoteServerError = remote_server_connect_rsd(adapter, handshake, &remoteServer) {
-            idevice_error_free(remoteServerError)
-            cleanup()
-            return remoteServerCode
-        }
-
-        if let simError = location_simulation_new(remoteServer, &locationSimulation) {
-            idevice_error_free(simError)
-            cleanup()
-            return simulationCreate
-        }
-        // location_simulation_new consumes/owns remote server lifecycle alongside handle
-        remoteServer = nil
-
-        if let setError = location_simulation_set(locationSimulation, latitude, longitude) {
-            idevice_error_free(setError)
-            cleanup()
-            return locationSet
-        }
-        return ok
-    }
-
-    private static func clearLocked() -> Int32 {
-        guard let locationSimulation else { return locationClear }
-        let err = location_simulation_clear(locationSimulation)
-        cleanup()
-        if let err {
-            idevice_error_free(err)
-            return locationClear
-        }
-        return ok
+    private static func postTimezoneUpdate() {
+        CFNotificationCenterPostNotificationWithOptions(
+            CFNotificationCenterGetDarwinNotifyCenter(),
+            CFNotificationName("AutomaticTimeZoneUpdateNeeded" as CFString),
+            nil,
+            nil,
+            kCFNotificationDeliverImmediately
+        )
     }
 }

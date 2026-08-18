@@ -10,6 +10,8 @@ jobs:
   release:
     runs-on: macos-26
     timeout-minutes: 30
+    permissions:
+      contents: write
     steps:
       - uses: actions/checkout@v4
 

@@ -2,7 +2,7 @@
 
 ## 1. Install the .tipa with TrollStore
 
-Get the prebuilt `Locus.tipa` from [Releases](https://github.com/ChrisMack32/Locus/releases) (or build from source), then:
+Get the prebuilt `Locus.tipa` from [Releases](https://github.com/jzksnsjswkw/locus-ZH/releases) (or build from source), then:
 
 1. Open **TrollStore** → **Settings** → **Install .tipa / .ipa** (or share the file into TrollStore).
 2. Select `Locus.tipa` → **Install**.

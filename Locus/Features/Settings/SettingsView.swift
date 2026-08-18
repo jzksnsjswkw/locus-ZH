@@ -58,8 +58,8 @@ struct SettingsView: View {
                 Section("关于") {
                     LabeledContent("版本", value: appVersion)
                     LabeledContent("定位引擎", value: "CLSimulationManager（TrollStore）")
-                    Link(destination: URL(string: "https://github.com/Bellaboy/locus-ZH")!) {
-                        LabeledContent("项目主页", value: "Bellaboy/locus-ZH")
+                    Link(destination: URL(string: "https://github.com/jzksnsjswkw/locus-ZH")!) {
+                        LabeledContent("项目主页", value: "jzksnsjswkw/locus-ZH")
                     }
                     LabeledContent("原始项目", value: "ChrisMack32/Locus")
                     Text("Locus 是采用 MIT 许可证的免费开源软件。定位注入使用 Apple 私有 CoreLocation 模拟 API（com.apple.locationd.simulation 权限）。")

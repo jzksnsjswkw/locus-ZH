@@ -24,7 +24,7 @@ Works on **iOS 16.0+**. Install with **TrollStore** — no pairing file, no deve
 
 ## Install
 
-See [SETUP.md](SETUP.md) for full steps. Grab a prebuilt `.tipa` from [Releases](https://github.com/ChrisMack32/Locus/releases), or build from source below.
+See [SETUP.md](SETUP.md) for full steps. Grab a prebuilt `.tipa` from [Releases](https://github.com/jzksnsjswkw/locus-ZH/releases), or build from source below.
 
 Bundle ID: `com.chrismack.locus`
 

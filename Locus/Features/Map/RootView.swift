@@ -131,7 +131,7 @@ struct RootView: View {
             favoriteRenameTask?.cancel()
             guard let favoriteID else { return }
             favoriteRenameTask = Task {
-                try? await Task.sleep(for: .seconds(2))
+                try? await Task.sleep(for: .seconds(5))
                 guard !Task.isCancelled,
                       favoriteRenameSuggestion?.id == favoriteID else { return }
                 withAnimation(.easeInOut(duration: 0.2)) {
@@ -191,12 +191,13 @@ struct RootView: View {
                 .font(.subheadline.weight(.semibold))
                 .foregroundStyle(LocusTheme.danger)
                 .lineLimit(1)
-                .padding(.horizontal, 14)
-                .padding(.vertical, 10)
+                .padding(.horizontal, 18)
+                .padding(.vertical, 16)
         }
         .buttonStyle(.plain)
         .locusGlass(.interactive, in: Capsule())
-        .accessibilityHint("两秒内轻点即可自定义收藏名称")
+        .contentShape(Rectangle())
+        .accessibilityHint("五秒内轻点即可自定义收藏名称")
     }
 
     private var generatedRouteControls: some View {

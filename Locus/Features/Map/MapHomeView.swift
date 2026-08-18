@@ -1530,8 +1530,8 @@ private struct FavoriteMapMarker: View {
                     Label("删除收藏", systemImage: "trash.fill")
                         .font(.caption.weight(.semibold))
                         .foregroundStyle(LocusTheme.danger)
-                        .padding(.horizontal, 10)
-                        .frame(height: 36)
+                        .padding(.horizontal, 18)
+                        .frame(height: 50)
                 }
                 .buttonStyle(.plain)
                 .locusGlass(.regular, in: Capsule())

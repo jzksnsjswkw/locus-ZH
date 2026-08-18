@@ -1,0 +1,48 @@
+name: Build & release tipa
+
+on:
+  push:
+    tags:
+      - 'v*'
+  workflow_dispatch:
+
+jobs:
+  release:
+    runs-on: macos-26
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install tools
+        run: brew install xcodegen ldid
+
+      - name: Generate project
+        run: xcodegen generate
+
+      - name: Build tipa
+        run: |
+          set -euo pipefail
+          SDK="iphoneos$(xcrun --sdk iphoneos --show-sdk-version)"
+          echo "Using SDK: $SDK"
+          ./build-tipa.sh --sdk "$SDK"
+
+      - name: Verify tipa
+        run: |
+          set -euo pipefail
+          test -f Locus.tipa
+          unzip -t Locus.tipa | tail -1
+
+      - name: Create release
+        if: startsWith(github.ref, 'refs/tags/')
+        uses: softprops/action-gh-release@v2
+        with:
+          files: Locus.tipa
+          generate_release_notes: true
+
+      - name: Upload artifact (manual run)
+        if: ${{ !startsWith(github.ref, 'refs/tags/') }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: Locus-tipa
+          path: Locus.tipa
+          if-no-files-found: error

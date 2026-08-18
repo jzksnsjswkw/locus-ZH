@@ -32,6 +32,7 @@ while [[ $# -gt 0 ]]; do
   case "$1" in
     --no-sdk-patch) DO_SDK_PATCH=0; shift ;;
     --out) OUT_TIPA="$2"; shift 2 ;;
+    --sdk) SDK_NAME="$2"; shift 2 ;;
     *) echo "未知参数: $1"; exit 1 ;;
   esac
 done

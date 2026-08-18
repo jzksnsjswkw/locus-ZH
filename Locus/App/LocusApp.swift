@@ -53,4 +53,5 @@ extension Notification.Name {
     static let locusUndoDrawingPoint = Notification.Name("locusUndoDrawingPoint")
     static let locusSaveDrawingRoute = Notification.Name("locusSaveDrawingRoute")
     static let locusDismissStatusDetails = Notification.Name("locusDismissStatusDetails")
+    static let locusFirstRealFix = Notification.Name("locusFirstRealFix")
 }

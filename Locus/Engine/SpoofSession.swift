@@ -360,6 +360,9 @@ final class SpoofSession: ObservableObject {
 
     /// Start lightweight GPS updates for the map puck / locate button.
     func startLocationUpdates() {
+        locationKeeper.onFirstFix = {
+            NotificationCenter.default.post(name: .locusFirstRealFix, object: nil)
+        }
         locationKeeper.start()
     }
 

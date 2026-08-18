@@ -4,6 +4,8 @@ import Foundation
 final class BackgroundKeepAlive: NSObject, CLLocationManagerDelegate {
     private let manager = CLLocationManager()
     private var lastKnownLocation: CLLocation?
+    /// One-shot callback fired when the first valid real fix arrives.
+    var onFirstFix: (() -> Void)?
 
     var lastKnownCoordinate: CLLocationCoordinate2D? {
         lastKnownLocation?.coordinate
@@ -63,6 +65,10 @@ final class BackgroundKeepAlive: NSObject, CLLocationManagerDelegate {
             return
         }
         lastKnownLocation = best
+        if let callback = onFirstFix {
+            onFirstFix = nil
+            callback()
+        }
     }
 
     func locationManager(_ manager: CLLocationManager, didFailWithError error: Error) {

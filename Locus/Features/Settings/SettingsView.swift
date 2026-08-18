@@ -12,6 +12,8 @@ struct SettingsView: View {
     @State private var pendingBackup: LocusBackup?
     @State private var backupNotice: String?
     @State private var confirmClearSearchHistory = false
+    /// Jitter radius in centimeters for the UI; the session stores meters.
+    @State private var jitterCm: Double = 300
 
     private var appVersion: String {
         let short = Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String ?? "—"
@@ -178,13 +180,15 @@ struct SettingsView: View {
 
             Toggle("模拟位置随机抖动", isOn: $session.locationJitterEnabled)
             if session.locationJitterEnabled {
-                Stepper(value: $session.locationJitterRadius, in: 1...20, step: 1) {
+                Stepper(value: $jitterCm, in: 10...2000, step: 10) {
                     LabeledContent("抖动半径") {
-                        Text("\(Int(session.locationJitterRadius)) 米")
+                        Text("\(Int(jitterCm)) 厘米")
                             .monospacedDigit()
                             .foregroundStyle(.secondary)
                     }
                 }
+                .onAppear { jitterCm = session.locationJitterRadius * 100 }
+                .onChange(of: jitterCm) { session.locationJitterRadius = $0 / 100 }
             }
         } header: {
             Text("地图与交互")

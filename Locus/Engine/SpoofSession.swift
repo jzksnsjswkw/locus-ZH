@@ -154,7 +154,7 @@ final class SpoofSession: ObservableObject {
         routeLoopCount = max(2, min(99, UserDefaults.standard.integer(forKey: "locus.routeLoopCount")))
         locationJitterEnabled = UserDefaults.standard.bool(forKey: "locus.locationJitterEnabled")
         let storedJitterRadius = UserDefaults.standard.double(forKey: "locus.locationJitterRadius")
-        locationJitterRadius = storedJitterRadius > 0 ? min(20, max(1, storedJitterRadius)) : 3
+        locationJitterRadius = storedJitterRadius > 0 ? min(20, max(0.1, storedJitterRadius)) : 3
         travelMode = TravelMode(rawValue: UserDefaults.standard.string(forKey: "locus.travelMode") ?? "") ?? .walk
         mapStyleIndex = min(1, max(0, UserDefaults.standard.integer(forKey: "locus.mapStyleIndex")))
         targetSelectionMode = TargetSelectionMode(
@@ -272,7 +272,7 @@ final class SpoofSession: ObservableObject {
             locationJitterEnabled = storedJitterEnabled
         }
         if let storedJitterRadius = backup.preferences.locationJitterRadius {
-            locationJitterRadius = min(20, max(1, storedJitterRadius))
+            locationJitterRadius = min(20, max(0.1, storedJitterRadius))
         }
     }
 

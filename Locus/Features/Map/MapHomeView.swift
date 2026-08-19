@@ -65,6 +65,10 @@ struct MapHomeView: View {
     /// these explicitly.
     @State private var safeAreaTop: CGFloat = 0
     @State private var safeAreaBottom: CGFloat = 0
+    /// Keyboard-sensitive bottom inset (search UI), separate from the
+    /// keyboard-free value above (right rail).
+    @State private var safeAreaBottomRuntime: CGFloat = 0
+    @State private var keyboardVisible = false
 
     private var mapType: MKMapType {
         switch session.mapStyleIndex {
@@ -121,7 +125,7 @@ struct MapHomeView: View {
                     searchBar
                 }
                 .padding(.horizontal, 16)
-                .padding(.bottom, 8 + safeAreaBottom)
+                .padding(.bottom, 8 + safeAreaBottomRuntime)
                 .transition(.move(edge: .bottom).combined(with: .opacity))
                 .zIndex(4)
             }
@@ -145,9 +149,24 @@ struct MapHomeView: View {
                     .onAppear {
                         safeAreaTop = proxy.safeAreaInsets.top
                         safeAreaBottom = proxy.safeAreaInsets.bottom
+                        safeAreaBottomRuntime = proxy.safeAreaInsets.bottom
                     }
                     .onChange(of: proxy.safeAreaInsets.top) { safeAreaTop = $0 }
-                    .onChange(of: proxy.safeAreaInsets.bottom) { safeAreaBottom = $0 }
+                    .onChange(of: proxy.safeAreaInsets.bottom) { value in
+                        safeAreaBottomRuntime = value
+                        // The keyboard inflates the safe-area bottom inset;
+                        // keep the rail's inset fixed to the keyboard-free
+                        // value so it doesn't jump when search closes.
+                        if !keyboardVisible {
+                            safeAreaBottom = value
+                        }
+                    }
+                    .onReceive(NotificationCenter.default.publisher(for: UIResponder.keyboardWillShowNotification)) { _ in
+                        keyboardVisible = true
+                    }
+                    .onReceive(NotificationCenter.default.publisher(for: UIResponder.keyboardWillHideNotification)) { _ in
+                        keyboardVisible = false
+                    }
                     .allowsHitTesting(false)
             }
         )
@@ -1010,7 +1029,7 @@ struct MapHomeView: View {
 
     private var mainRouteLineWidth: CGFloat {
         if routeOptions.isEmpty { return routeIsHandDrawn ? 4 : 5 }
-        return 6
+        return 9
     }
 
     private var mainRouteDashed: Bool {
@@ -1532,6 +1551,7 @@ private struct FavoriteMapMarker: View {
                         .foregroundStyle(LocusTheme.danger)
                         .padding(.horizontal, 18)
                         .frame(height: 50)
+                        .contentShape(Rectangle())
                 }
                 .buttonStyle(.plain)
                 .locusGlass(.regular, in: Capsule())
@@ -1770,6 +1790,18 @@ struct LocusMapView: UIViewRepresentable {
             context.coordinator.alternativesKey = alternativesKey
             context.coordinator.drawnKey = drawnKey
 
+            // Alternative route polylines (unselected options) — added first so
+            // the selected route below renders on top (later overlays win).
+            for overlay in context.coordinator.alternativeOverlays {
+                mapView.removeOverlay(overlay)
+            }
+            context.coordinator.alternativeOverlays.removeAll()
+            for coords in alternativeRouteCoords where coords.count > 1 {
+                let polyline = MKPolyline(coordinates: coords, count: coords.count)
+                context.coordinator.alternativeOverlays.append(polyline)
+                mapView.addOverlay(polyline)
+            }
+
             // Selected / presented route polyline.
             if routeCoords.count > 1 {
                 if let overlay = context.coordinator.routeOverlay { mapView.removeOverlay(overlay) }
@@ -1781,17 +1813,6 @@ struct LocusMapView: UIViewRepresentable {
             } else if let overlay = context.coordinator.routeOverlay {
                 mapView.removeOverlay(overlay)
                 context.coordinator.routeOverlay = nil
-            }
-
-            // Alternative route polylines (unselected options).
-            for overlay in context.coordinator.alternativeOverlays {
-                mapView.removeOverlay(overlay)
-            }
-            context.coordinator.alternativeOverlays.removeAll()
-            for coords in alternativeRouteCoords where coords.count > 1 {
-                let polyline = MKPolyline(coordinates: coords, count: coords.count)
-                context.coordinator.alternativeOverlays.append(polyline)
-                mapView.addOverlay(polyline)
             }
 
             // Drawn path polyline (dashed).
@@ -1897,11 +1918,15 @@ struct LocusMapView: UIViewRepresentable {
                 renderer.lineCap = .round
                 renderer.lineJoin = .round
                 if polyline === routeOverlay {
+                    let renderer = ArrowPolylineRenderer(polyline: polyline)
+                    renderer.lineCap = .round
+                    renderer.lineJoin = .round
                     renderer.strokeColor = UIColor(parent.routeColor)
                     renderer.lineWidth = parent.routeLineWidth
                     if parent.routeDashed {
                         renderer.lineDashPattern = [6, 4]
                     }
+                    return renderer
                 } else if alternativeOverlays.contains(where: { $0 === polyline }) {
                     renderer.strokeColor = UIColor(
                         Color(red: 0.39, green: 0.78, blue: 0.55)
@@ -1922,6 +1947,109 @@ struct LocusMapView: UIViewRepresentable {
 
 private extension UIWindowScene {
     var keyWindow: UIWindow? { windows.first { $0.isKeyWindow } }
+}
+
+/// Polyline renderer that draws white chevron arrowheads (">" shapes, no
+/// tails) spaced along the route, over the colored stroke — the Gaode-map
+/// style. Arrowheads are drawn in screen space (fixed size at any zoom).
+private final class ArrowPolylineRenderer: MKPolylineRenderer {
+    override func draw(_ mapRect: MKMapRect, zoomScale: MKZoomScale, in context: CGContext) {
+        let points = polyline.points()
+        let count = polyline.pointCount
+        guard count >= 2 else { return }
+
+        // Compensate with the context's ACTUAL scale (a fixed screen size
+        // divided by ctm, multiplied back by ctm during drawing, stays
+        // constant at every zoom) — the zoomScale parameter does not track it.
+        let scale = (context.ctm.a * context.ctm.a + context.ctm.b * context.ctm.b).squareRoot()
+        guard scale.isFinite, scale > 0 else { return }
+
+        context.saveGState()
+        context.setLineWidth(lineWidth / scale)
+        context.setLineCap(.round)
+        context.setLineJoin(.round)
+        if let color = strokeColor {
+            context.setStrokeColor(color.cgColor)
+        }
+        context.move(to: point(for: points[0]))
+        for i in 1..<count {
+            context.addLine(to: point(for: points[i]))
+        }
+        context.strokePath()
+        context.restoreGState()
+
+        // Cumulative path length in drawing space (uniform scale, so angles and
+        // ratios here match the rendered line). Arrows are placed by equal arc
+        // length — never by a fixed spacing that can exceed the path length at
+        // low zoom (that is exactly how arrows silently vanish).
+        var cumulative: [CGFloat] = [0]
+        cumulative.reserveCapacity(count)
+        for i in 1..<count {
+            let a = points[i - 1]
+            let b = points[i]
+            let dx = CGFloat(b.x - a.x)
+            let dy = CGFloat(b.y - a.y)
+            cumulative.append(cumulative[i - 1] + sqrt(dx * dx + dy * dy))
+        }
+        let total = cumulative[count - 1]
+        guard total > 0 else { return }
+
+        let screenSpacing: CGFloat = 80
+        // Flat chevron that spans the stroke width (tips touch both line edges)
+        // with a thin stroke — reads as a ">" arrowhead, not a fat triangle.
+        let halfWidth = lineWidth / 2 / scale
+        let fwd: CGFloat = 3 / scale
+        let back: CGFloat = 3 / scale
+
+        // Equal-arc placement, at least one arrow no matter how short the path.
+        let arrowCount = max(1, Int(total / (screenSpacing / scale)))
+        let arcStep = total / CGFloat(arrowCount)
+
+        context.saveGState()
+        context.setStrokeColor(UIColor.white.cgColor)
+        context.setLineWidth(max(1, lineWidth * 0.2) / scale)
+        context.setLineCap(.round)
+        context.setLineJoin(.round)
+
+        for slot in 0..<arrowCount {
+            let target = arcStep * (CGFloat(slot) + 0.5)
+            guard let idx = cumulative.firstIndex(where: { $0 >= target }), idx > 0 else {
+                continue
+            }
+            let a = points[idx - 1]
+            let b = points[idx]
+            let span = cumulative[idx] - cumulative[idx - 1]
+            let ratio = span > 0 ? (target - cumulative[idx - 1]) / span : 0
+            let position = MKMapPoint(
+                x: a.x + (b.x - a.x) * Double(ratio),
+                y: a.y + (b.y - a.y) * Double(ratio)
+            )
+            let angle = atan2(CGFloat(b.y - a.y), CGFloat(b.x - a.x))
+            let center = point(for: position)
+            let ux = cos(angle)
+            let uy = sin(angle)
+            let nx = -uy
+            let ny = ux
+            let tip = CGPoint(
+                x: center.x + ux * fwd,
+                y: center.y + uy * fwd
+            )
+            let left = CGPoint(
+                x: center.x - ux * back + nx * halfWidth,
+                y: center.y - uy * back + ny * halfWidth
+            )
+            let right = CGPoint(
+                x: center.x - ux * back - nx * halfWidth,
+                y: center.y - uy * back - ny * halfWidth
+            )
+            context.move(to: left)
+            context.addLine(to: tip)
+            context.addLine(to: right)
+            context.strokePath()
+        }
+
+        context.restoreGState()
+    }
 }
 
 @MainActor

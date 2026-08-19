@@ -160,7 +160,7 @@ struct RootView: View {
                     height: MapChromeLayout.rightColumnWidth
                 )
                 .aspectRatio(1, contentMode: .fit)
-                .contentShape(Circle())
+                .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
         .locusGlass(.interactive, in: Circle())
@@ -193,6 +193,7 @@ struct RootView: View {
                 .lineLimit(1)
                 .padding(.horizontal, 18)
                 .padding(.vertical, 16)
+                .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
         .locusGlass(.interactive, in: Capsule())
@@ -977,7 +978,7 @@ struct BottomControlsView: View {
                 .font(.body.weight(.semibold))
                 .foregroundStyle(.primary)
                 .frame(width: 48, height: 48)
-                .contentShape(Circle())
+                .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
         .accessibilityLabel("打开轨迹")
@@ -995,7 +996,7 @@ struct BottomControlsView: View {
                 .font(.body.weight(.semibold))
                 .foregroundStyle(session.joystickActive ? LocusTheme.accentSecondary : .primary)
                 .frame(width: 48, height: 48)
-                .contentShape(Circle())
+                .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
         .accessibilityLabel(session.joystickActive ? "关闭摇杆" : "开启摇杆")
@@ -1189,7 +1190,7 @@ struct BottomControlsView: View {
                 .font(.body.weight(.semibold))
                 .foregroundStyle(.primary)
                 .frame(width: 48, height: 48)
-                .contentShape(Circle())
+                .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
     }
@@ -1205,7 +1206,7 @@ struct IconButton: View {
             Image(systemName: systemName)
                 .font(.body.weight(.semibold))
                 .frame(width: 44, height: 44)
-                .contentShape(Circle())
+                .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
         .locusGlass(.interactive, in: Circle())

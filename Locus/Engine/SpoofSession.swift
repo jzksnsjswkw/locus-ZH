@@ -84,6 +84,12 @@ final class SpoofSession: ObservableObject {
         didSet { UserDefaults.standard.set(targetSelectionMode.rawValue, forKey: "locus.targetSelectionMode") }
     }
     @Published var crosshairCoordinate: CLLocationCoordinate2D?
+    /// Crosshair-sync suppression deadline: set when a search jumps the map,
+    /// so the jump's regionDidChangeAnimated callbacks cannot overwrite the
+    /// search target mid-flight. Lives on the session (reference type) because
+    /// the onRegionSettled closure observes it from a captured SwiftUI struct,
+    /// where @State writes are not reliably visible.
+    var crosshairSettleSuppressedUntil = Date.distantPast
     @Published var searchHistoryEnabled = true {
         didSet { UserDefaults.standard.set(searchHistoryEnabled, forKey: "locus.searchHistoryEnabled") }
     }

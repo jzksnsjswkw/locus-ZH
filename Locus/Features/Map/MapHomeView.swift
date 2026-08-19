@@ -306,11 +306,17 @@ struct MapHomeView: View {
             didAutoLocateOnFirstFix = true
             goToCurrentLocation()
         }
-        .onChange(of: session.targetSelectionMode) { mode in
+                .onChange(of: session.targetSelectionMode) { mode in
             closePinActions()
             if mode == .crosshair {
-                session.crosshairCoordinate = session.pin ?? session.simulated ?? session.realMapCoordinate
+                session.crosshairCoordinate = region.center
             }
+        }
+        .onChange(of: region.center.latitude) { _ in
+            syncCrosshairFromRegion()
+        }
+        .onChange(of: region.center.longitude) { _ in
+            syncCrosshairFromRegion()
         }
         .onChange(of: selectedRouteOptionID) { selectedID in
             guard let selectedID,
@@ -585,7 +591,9 @@ struct MapHomeView: View {
     private func handleRegionSettled() {
         regionSettledToken += 1
         session.saveMapRegion(region)
-        if session.targetSelectionMode == .crosshair {
+        let suppressed = Date() <= session.crosshairSettleSuppressedUntil
+        if session.targetSelectionMode == .crosshair,
+           !suppressed {
             session.crosshairCoordinate = region.center
             if let named = searchNamedCoordinate,
                CLLocation(latitude: named.latitude, longitude: named.longitude)
@@ -1316,11 +1324,14 @@ struct MapHomeView: View {
     ) {
         pinPlaceName = title
         searchNamedCoordinate = coordinate
+        session.crosshairCoordinate = coordinate
         if session.targetSelectionMode == .pin {
             session.pin = coordinate
-        } else {
-            session.crosshairCoordinate = coordinate
         }
+        // The animated jump below fires regionDidChangeAnimated mid-flight;
+        // handleRegionSettled would overwrite the search target with a
+        // half-way center. Suppress it until the jump settles.
+        session.crosshairSettleSuppressedUntil = Date().addingTimeInterval(1.0)
         animateRegionToken += 1
         region = MKCoordinateRegion(
             center: coordinate,
@@ -1333,6 +1344,12 @@ struct MapHomeView: View {
         searchPresented = false
         session.pushNamedRecent(name: title, coordinate: coordinate)
         session.recordSearch(title: title, subtitle: subtitle, coordinate: coordinate)
+    }
+
+    private func syncCrosshairFromRegion() {
+        guard session.targetSelectionMode == .crosshair,
+              Date() > session.crosshairSettleSuppressedUntil else { return }
+        session.crosshairCoordinate = region.center
     }
 
     private func buildRoadRoute() {

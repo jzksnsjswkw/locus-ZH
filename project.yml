@@ -24,8 +24,8 @@ targets:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: com.chrismack.locus
         PRODUCT_NAME: Locus
-        MARKETING_VERSION: "1.0.4"
-        CURRENT_PROJECT_VERSION: "5"
+        MARKETING_VERSION: "1.1.0"
+        CURRENT_PROJECT_VERSION: "6"
         INFOPLIST_FILE: Locus/Resources/Info.plist
         INFOPLIST_KEY_NSSupportsLiveActivities: YES
         CODE_SIGN_ENTITLEMENTS: Locus/Resources/Locus.entitlements
@@ -52,8 +52,8 @@ targets:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: com.chrismack.locus.liveactivity
         PRODUCT_NAME: LocusLiveActivity
-        MARKETING_VERSION: "1.0.4"
-        CURRENT_PROJECT_VERSION: "5"
+        MARKETING_VERSION: "1.1.0"
+        CURRENT_PROJECT_VERSION: "6"
         INFOPLIST_FILE: LocusLiveActivity/Info.plist
         INFOPLIST_KEY_NSSupportsLiveActivities: YES
         GENERATE_INFOPLIST_FILE: false

@@ -60,6 +60,7 @@ struct MapDropPin: View {
         }
         // The frame never changes, so the red pin tip stays fixed while menus open.
         .frame(width: 200, height: 102, alignment: .bottom)
+        .allowsHitTesting(true)
         .animation(.spring(response: 0.28, dampingFraction: 0.78), value: selected)
         .animation(.spring(response: 0.28, dampingFraction: 0.78), value: expandedActions)
         .animation(.easeOut(duration: 0.15), value: isDragging)
@@ -67,33 +68,43 @@ struct MapDropPin: View {
     }
 
     private var pinActionMenu: some View {
-        HStack(spacing: 4) {
-            actionButton("删除", systemImage: "trash.fill", color: LocusTheme.danger, action: onRemove)
+        HStack(spacing: 0) {
+            actionButton("删除", systemImage: "trash.fill", color: LocusTheme.danger, width: 78, action: onRemove)
             if expandedActions {
-                actionButton("生成轨迹", systemImage: "road.lanes", color: .blue, action: onBuildRouteToPin)
+                Divider()
+                    .overlay(Color.white.opacity(0.25))
+                    .frame(height: 28)
+                actionButton("生成轨迹", systemImage: SFSymbolCompat.resolved("road.lanes"), color: .blue, width: 112, action: onBuildRouteToPin)
             }
         }
-        .padding(3)
+        .padding(.horizontal, 4)
+        .frame(height: 52)
         .locusGlass(.regular, in: Capsule())
-        .contentShape(Capsule())
-        .fixedSize()
+        .contentShape(Rectangle())
     }
 
     private func actionButton(
         _ title: String,
         systemImage: String,
         color: Color = .primary,
+        width: CGFloat,
         action: @escaping () -> Void
     ) -> some View {
-        Button(action: action) {
-            Label(title, systemImage: systemImage)
-                .font(.caption.weight(.semibold))
-                .foregroundStyle(color)
-                .padding(.horizontal, 6)
-                .frame(height: 30)
-                .contentShape(Capsule())
-        }
-        .buttonStyle(.plain)
+        // Plain Button hit-testing degenerates to rendered glyphs on real
+        // devices above MKMapView; a direct tap gesture honors contentShape.
+        Label(title, systemImage: systemImage)
+            .font(.subheadline.weight(.semibold))
+            .foregroundStyle(color)
+            .lineLimit(1)
+            .minimumScaleFactor(0.75)
+            .frame(width: width, height: 44)
+            .contentShape(Rectangle())
+            .onTapGesture {
+                UIImpactFeedbackGenerator(style: .light).impactOccurred()
+                action()
+            }
+            .accessibilityLabel(title)
+            .accessibilityAddTraits(.isButton)
     }
 
     private var dragGesture: some Gesture {

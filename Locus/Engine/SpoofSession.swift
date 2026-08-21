@@ -130,6 +130,20 @@ final class SpoofSession: ObservableObject {
     @Published var locationJitterRadius: Double = 3 {
         didSet { UserDefaults.standard.set(locationJitterRadius, forKey: "locus.locationJitterRadius") }
     }
+    /// Base interval between simulated location pushes while moving (seconds).
+    @Published var locationUpdateInterval: Double = 0.5 {
+        didSet {
+            UserDefaults.standard.set(locationUpdateInterval, forKey: "locus.locationUpdateInterval")
+            restartJoystickTimerIfNeeded()
+        }
+    }
+    /// Random jitter amplitude applied to the update interval (seconds, ±).
+    @Published var locationUpdateJitter: Double = 0 {
+        didSet {
+            UserDefaults.standard.set(locationUpdateJitter, forKey: "locus.locationUpdateJitter")
+            restartJoystickTimerIfNeeded()
+        }
+    }
 
     @Published var favorites: [SavedPlace] = []
     @Published var recents: [SavedPlace] = []
@@ -141,6 +155,7 @@ final class SpoofSession: ObservableObject {
     private var routeGeneration = UUID()
     private var backgroundTask = UIBackgroundTaskIdentifier.invalid
     private var joystickVector: CGVector = .zero
+    private var lastJoystickTickAt: Date?
     private let locationKeeper = BackgroundKeepAlive()
 
     private let favoritesKey = "locus.favorites"
@@ -161,6 +176,11 @@ final class SpoofSession: ObservableObject {
         locationJitterEnabled = UserDefaults.standard.bool(forKey: "locus.locationJitterEnabled")
         let storedJitterRadius = UserDefaults.standard.double(forKey: "locus.locationJitterRadius")
         locationJitterRadius = storedJitterRadius > 0 ? min(20, max(0.1, storedJitterRadius)) : 3
+        let storedUpdateInterval = UserDefaults.standard.double(forKey: "locus.locationUpdateInterval")
+        locationUpdateInterval = storedUpdateInterval > 0 ? min(10, max(0.1, storedUpdateInterval)) : 0.5
+        let storedUpdateJitter = UserDefaults.standard.double(forKey: "locus.locationUpdateJitter")
+        locationUpdateJitter = storedUpdateJitter > 0 ? min(5, storedUpdateJitter) : 0
+        locationUpdateJitter = min(locationUpdateJitter, locationUpdateInterval)
         travelMode = TravelMode(rawValue: UserDefaults.standard.string(forKey: "locus.travelMode") ?? "") ?? .walk
         mapStyleIndex = min(1, max(0, UserDefaults.standard.integer(forKey: "locus.mapStyleIndex")))
         targetSelectionMode = TargetSelectionMode(
@@ -238,7 +258,9 @@ final class SpoofSession: ObservableObject {
                 appearanceMode: appearanceMode.rawValue,
                 zoomSliderEnabled: zoomSliderEnabled,
                 locationJitterEnabled: locationJitterEnabled,
-                locationJitterRadius: locationJitterRadius
+                locationJitterRadius: locationJitterRadius,
+                locationUpdateInterval: locationUpdateInterval,
+                locationUpdateJitter: locationUpdateJitter
             )
         )
     }
@@ -280,6 +302,13 @@ final class SpoofSession: ObservableObject {
         if let storedJitterRadius = backup.preferences.locationJitterRadius {
             locationJitterRadius = min(20, max(0.1, storedJitterRadius))
         }
+        if let storedUpdateInterval = backup.preferences.locationUpdateInterval {
+            locationUpdateInterval = min(10, max(0.1, storedUpdateInterval))
+        }
+        if let storedUpdateJitter = backup.preferences.locationUpdateJitter {
+            locationUpdateJitter = min(5, max(0, storedUpdateJitter))
+        }
+        locationUpdateJitter = min(locationUpdateJitter, locationUpdateInterval)
     }
 
     func saveMapRegion(_ region: MKCoordinateRegion) {
@@ -392,12 +421,8 @@ final class SpoofSession: ObservableObject {
             return
         }
         joystickActive = true
-        joystickTimer?.invalidate()
-        joystickTimer = Timer.scheduledTimer(withTimeInterval: 0.25, repeats: true) { [weak self] _ in
-            Task { @MainActor in
-                self?.tickJoystick()
-            }
-        }
+        lastJoystickTickAt = Date()
+        scheduleNextJoystickTick()
     }
 
     func updateJoystick(vector: CGVector) {
@@ -430,6 +455,33 @@ final class SpoofSession: ObservableObject {
         joystickVector = .zero
         joystickTimer?.invalidate()
         joystickTimer = nil
+        lastJoystickTickAt = nil
+    }
+
+    /// One-shot chained scheduling so each tick can apply a freshly
+    /// jittered interval and pick up setting changes without a restart.
+    private func scheduleNextJoystickTick() {
+        joystickTimer?.invalidate()
+        joystickTimer = Timer.scheduledTimer(
+            withTimeInterval: max(0.05, effectiveUpdateInterval()),
+            repeats: false
+        ) { [weak self] _ in
+            Task { @MainActor in
+                self?.runJoystickTick()
+            }
+        }
+    }
+
+    private func runJoystickTick() {
+        guard joystickActive else { return }
+        tickJoystick()
+        guard joystickActive else { return }
+        scheduleNextJoystickTick()
+    }
+
+    private func restartJoystickTimerIfNeeded() {
+        guard joystickActive else { return }
+        scheduleNextJoystickTick()
     }
 
     func discardRoute() {
@@ -482,25 +534,25 @@ final class SpoofSession: ObservableObject {
                 for (segmentIndex, next) in coordinates.dropFirst().enumerated() {
                     if Task.isCancelled { break }
                     let distance = Self.distance(from: previous, to: next)
-                    var speed = self.travelMode.baseSpeed * self.speedMultiplier * Double.random(in: 0.88...1.12)
-                    speed = max(0.2, speed)
-                    let stepMeters: CLLocationDistance = min(12, max(1, speed * 0.5))
-                    let steps = max(1, Int(ceil(distance / stepMeters)))
-                    for i in 1...steps {
+                    var traveled: CLLocationDistance = 0
+                    while traveled < distance {
                         if Task.isCancelled { break }
-                        let t = Double(i) / Double(steps)
+                        // Advance exactly speed × interval per tick: the update rate
+                        // controls sample density only, never the resulting pace.
+                        let interval = max(0.05, self.effectiveUpdateInterval())
+                        let speed = max(0.2, self.travelMode.baseSpeed * self.speedMultiplier * Double.random(in: 0.94...1.06))
+                        traveled = min(distance, traveled + speed * interval)
+                        let t = distance > 0 ? traveled / distance : 1
                         let coord = jittered(
                             CLLocationCoordinate2D(
                                 latitude: previous.latitude + (next.latitude - previous.latitude) * t,
                                 longitude: previous.longitude + (next.longitude - previous.longitude) * t
                             )
                         )
-                        speed = max(0.2, self.travelMode.baseSpeed * self.speedMultiplier * Double.random(in: 0.94...1.06))
-                        let delay = max(0.05, stepMeters / speed)
-                        try? await Task.sleep(nanoseconds: UInt64(delay * 1_000_000_000))
+                        try? await Task.sleep(nanoseconds: UInt64(interval * 1_000_000_000))
                         if Task.isCancelled { break }
                         self.routeDistanceTraveled += Self.distance(from: emittedCoordinate, to: coord)
-                        self.routeElapsedTime += delay
+                        self.routeElapsedTime += interval
                         emittedCoordinate = coord
                         guard self.apply(coord, markRecent: false) else { break }
                         self.routeProgress = min(1, (Double(segmentIndex) + t) / Double(max(1, coordinates.count - 1)))
@@ -598,7 +650,7 @@ final class SpoofSession: ObservableObject {
               let favorite = favorites.first(where: { shouldLookupCountry(for: $0) }) {
             let canContinue = await resolveFavoriteMetadata(for: favorite.id)
             guard canContinue, !Task.isCancelled else { return }
-            try? await Task.sleep(for: .seconds(1))
+            try? await Task.sleep(nanoseconds: 1_000_000_000)
         }
     }
 
@@ -765,7 +817,9 @@ final class SpoofSession: ObservableObject {
         let nx = joystickVector.dx / magnitude
         let ny = -joystickVector.dy / magnitude
         let speed = travelMode.baseSpeed * speedMultiplier * min(1.0, magnitude) * Double.random(in: 0.9...1.1)
-        let dt = 0.25
+        let now = Date()
+        let dt = lastJoystickTickAt.map { max(0.05, now.timeIntervalSince($0)) } ?? 0.25
+        lastJoystickTickAt = now
         let meters = speed * dt
         let next = jittered(offset(coordinate: current, eastMeters: nx * meters, northMeters: ny * meters))
         _ = apply(next, markRecent: false)
@@ -830,5 +884,11 @@ final class SpoofSession: ObservableObject {
         let angle = Double.random(in: 0..<(2 * .pi))
         let radius = sqrt(Double.random(in: 0...1)) * locationJitterRadius
         return offset(coordinate: coordinate, eastMeters: cos(angle) * radius, northMeters: sin(angle) * radius)
+    }
+
+    private func effectiveUpdateInterval() -> TimeInterval {
+        guard locationUpdateJitter > 0 else { return locationUpdateInterval }
+        let jitteredInterval = locationUpdateInterval + Double.random(in: -locationUpdateJitter...locationUpdateJitter)
+        return max(0.05, jitteredInterval)
     }
 }

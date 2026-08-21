@@ -45,6 +45,8 @@ struct BackupPreferences: Codable {
     var zoomSliderEnabled: Bool?
     var locationJitterEnabled: Bool?
     var locationJitterRadius: Double?
+    var locationUpdateInterval: Double?
+    var locationUpdateJitter: Double?
 }
 
 enum BackupError: LocalizedError {

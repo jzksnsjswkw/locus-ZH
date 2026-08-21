@@ -21,16 +21,12 @@ set -euo pipefail
 cd "$(dirname "$0")"
 
 OUT_TIPA="Locus.tipa"
-DO_SDK_PATCH=1
-SDK_TARGET_VER="18.5"   # 让旧系统认为 app 链接自旧 SDK 的伪装版本
-MINOS_VER="16.3"        # 保持与部署目标一致
 SDK_NAME="iphoneos26.5" # 构建用 SDK（新 SDK 编译, 运行时伪装旧版本）
 ENTITLEMENTS="Locus/Resources/Locus.entitlements"
 PBXPROJ="Locus.xcodeproj/project.pbxproj"
 
 while [[ $# -gt 0 ]]; do
   case "$1" in
-    --no-sdk-patch) DO_SDK_PATCH=0; shift ;;
     --out) OUT_TIPA="$2"; shift 2 ;;
     --sdk) SDK_NAME="$2"; shift 2 ;;
     *) echo "未知参数: $1"; exit 1 ;;
@@ -58,16 +54,6 @@ fi
 APP="build/Release-iphoneos/Locus.app"
 BIN="$APP/Locus"
 [ -f "$BIN" ] || { echo "找不到构建产物: $BIN"; exit 1; }
-
-if [ "$DO_SDK_PATCH" = "1" ]; then
-  echo "==> [3/6] 应用 SDK 版本补丁: sdk 26.5 -> $SDK_TARGET_VER (修复 iOS 16 黑屏地图)"
-  vtool -show-build-version "$BIN" 2>/dev/null | grep -E "minos|sdk" || true
-  vtool -set-build-version ios "$MINOS_VER" "$SDK_TARGET_VER" -replace -output "$BIN" "$BIN"
-  vtool -show-build-version "$BIN" 2>/dev/null | grep -E "minos|sdk" || true
-  echo "   (警告: code signature will be invalid 属预期, 下方会重新签名)"
-else
-  echo "==> [3/6] 跳过 SDK 版本补丁 (--no-sdk-patch)"
-fi
 
 echo "==> [4/6] ldid 签名 (嵌入 $ENTITLEMENTS)"
 rm -rf "$APP/_CodeSignature"

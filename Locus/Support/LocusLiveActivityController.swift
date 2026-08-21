@@ -2,6 +2,7 @@ import ActivityKit
 import CoreLocation
 import Foundation
 
+@available(iOS 16.2, *)
 actor LocusLiveActivityController {
     static let shared = LocusLiveActivityController()
     static let statusKey = "locus.liveActivityLastStatus"

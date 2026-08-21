@@ -2,7 +2,7 @@ name: Locus
 options:
   bundleIdPrefix: com.chrismack
   deploymentTarget:
-    iOS: "16.3"
+    iOS: "15.0"
   xcodeVersion: "16.0"
   createIntermediateGroups: true
 settings:
@@ -11,7 +11,7 @@ settings:
     DEVELOPMENT_TEAM: ""
     SWIFT_VERSION: "5.0"
     TARGETED_DEVICE_FAMILY: "1,2"
-    IPHONEOS_DEPLOYMENT_TARGET: "16.3"
+    IPHONEOS_DEPLOYMENT_TARGET: "15.0"
 targets:
   Locus:
     type: application
@@ -60,3 +60,4 @@ targets:
         APPLICATION_EXTENSION_API_ONLY: YES
         SKIP_INSTALL: YES
         LD_RUNPATH_SEARCH_PATHS: "$(inherited) @executable_path/../../Frameworks"
+        IPHONEOS_DEPLOYMENT_TARGET: "16.1"

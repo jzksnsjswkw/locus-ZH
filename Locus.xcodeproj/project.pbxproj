@@ -7,6 +7,7 @@
 	objects = {
 
 /* Begin PBXBuildFile section */
+		145588D172889479C6311C08 /* Backport.swift in Sources */ = {isa = PBXBuildFile; fileRef = 45C4DB822227311F49D3E3F4 /* Backport.swift */; };
 		1833D0A672C1396A3B666C1B /* LocusActivityAttributes.swift in Sources */ = {isa = PBXBuildFile; fileRef = 6B8C1927DBBDAD0CDFEB0839 /* LocusActivityAttributes.swift */; };
 		1A9609434342E76342B42B54 /* LocusEasterEggView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 361C48381EA09BB299BD110E /* LocusEasterEggView.swift */; };
 		1CBCD6A08AA473AB0CB526CA /* Theme.swift in Sources */ = {isa = PBXBuildFile; fileRef = 8EA9F9A2A821575AEE768E67 /* Theme.swift */; };
@@ -74,6 +75,7 @@
 		3B51D4F370EFC220A54A082F /* Locus.entitlements */ = {isa = PBXFileReference; lastKnownFileType = text.plist.entitlements; path = Locus.entitlements; sourceTree = "<group>"; };
 		429366C3732ACF4031A7006B /* SetupFlowView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SetupFlowView.swift; sourceTree = "<group>"; };
 		43E537C130BA27E6F6B1CEA4 /* LocusLiveActivity.appex */ = {isa = PBXFileReference; includeInIndex = 0; lastKnownFileType = "wrapper.app-extension"; path = LocusLiveActivity.appex; sourceTree = BUILT_PRODUCTS_DIR; };
+		45C4DB822227311F49D3E3F4 /* Backport.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Backport.swift; sourceTree = "<group>"; };
 		5415BEF759B8C8AF04096B3E /* BackgroundKeepAlive.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BackgroundKeepAlive.swift; sourceTree = "<group>"; };
 		6B8C1927DBBDAD0CDFEB0839 /* LocusActivityAttributes.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LocusActivityAttributes.swift; sourceTree = "<group>"; };
 		73213CCBDEECC0132696CC4E /* CLSimulationManager.h */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.h; path = CLSimulationManager.h; sourceTree = "<group>"; };
@@ -181,6 +183,7 @@
 		B67E43CBD395C80F3D3345CB /* Support */ = {
 			isa = PBXGroup;
 			children = (
+				45C4DB822227311F49D3E3F4 /* Backport.swift */,
 				1B40BB93455E443663CC3940 /* Locus-Bridging-Header.h */,
 				6B8C1927DBBDAD0CDFEB0839 /* LocusActivityAttributes.swift */,
 				B6EA4CF41E10BCEBEAE08F3E /* LocusBackup.swift */,
@@ -326,6 +329,7 @@
 			buildActionMask = 2147483647;
 			files = (
 				C5B176B29163E524B776757A /* BackgroundKeepAlive.swift in Sources */,
+				145588D172889479C6311C08 /* Backport.swift in Sources */,
 				73FB8F9F1681ECD08D3FD0F7 /* ChinaCoordinateTransform.swift in Sources */,
 				AB35A419877FF9CA0B4AB114 /* JoystickPad.swift in Sources */,
 				DA2B8023B167C95C2A034C47 /* LocationEngine.swift in Sources */,
@@ -416,7 +420,7 @@
 				GCC_WARN_UNINITIALIZED_AUTOS = YES_AGGRESSIVE;
 				GCC_WARN_UNUSED_FUNCTION = YES;
 				GCC_WARN_UNUSED_VARIABLE = YES;
-				IPHONEOS_DEPLOYMENT_TARGET = 16.3;
+				IPHONEOS_DEPLOYMENT_TARGET = 15.0;
 				MTL_ENABLE_DEBUG_INFO = NO;
 				MTL_FAST_MATH = YES;
 				PRODUCT_NAME = "$(TARGET_NAME)";
@@ -436,6 +440,7 @@
 				GENERATE_INFOPLIST_FILE = NO;
 				INFOPLIST_FILE = LocusLiveActivity/Info.plist;
 				INFOPLIST_KEY_NSSupportsLiveActivities = YES;
+				IPHONEOS_DEPLOYMENT_TARGET = 16.1;
 				LD_RUNPATH_SEARCH_PATHS = "$(inherited) @executable_path/../../Frameworks";
 				MARKETING_VERSION = 1.0.4;
 				PRODUCT_BUNDLE_IDENTIFIER = com.chrismack.locus.liveactivity;
@@ -454,6 +459,7 @@
 				GENERATE_INFOPLIST_FILE = NO;
 				INFOPLIST_FILE = LocusLiveActivity/Info.plist;
 				INFOPLIST_KEY_NSSupportsLiveActivities = YES;
+				IPHONEOS_DEPLOYMENT_TARGET = 16.1;
 				LD_RUNPATH_SEARCH_PATHS = "$(inherited) @executable_path/../../Frameworks";
 				MARKETING_VERSION = 1.0.4;
 				PRODUCT_BUNDLE_IDENTIFIER = com.chrismack.locus.liveactivity;
@@ -540,7 +546,7 @@
 				GCC_WARN_UNINITIALIZED_AUTOS = YES_AGGRESSIVE;
 				GCC_WARN_UNUSED_FUNCTION = YES;
 				GCC_WARN_UNUSED_VARIABLE = YES;
-				IPHONEOS_DEPLOYMENT_TARGET = 16.3;
+				IPHONEOS_DEPLOYMENT_TARGET = 15.0;
 				MTL_ENABLE_DEBUG_INFO = INCLUDE_SOURCE;
 				MTL_FAST_MATH = YES;
 				ONLY_ACTIVE_ARCH = YES;

@@ -1,5 +1,6 @@
 import ActivityKit
 
+@available(iOS 16.1, *)
 struct LocusActivityAttributes: ActivityAttributes {
     struct ContentState: Codable, Hashable {
         var status: String

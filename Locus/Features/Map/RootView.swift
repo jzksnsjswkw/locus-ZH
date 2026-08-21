@@ -97,11 +97,11 @@ struct RootView: View {
         }
         .sheet(isPresented: $showSettings) {
             SettingsView()
-                .presentationDetents([.medium, .large])
+                .locusMediumLargeDetents()
         }
         .sheet(isPresented: $showPlaces) {
             PlacesView()
-                .presentationDetents([.medium, .large])
+                .locusMediumLargeDetents()
         }
         .alert("Locus", isPresented: Binding(
             get: { session.lastError != nil },
@@ -111,27 +111,25 @@ struct RootView: View {
         } message: {
             Text(session.lastError ?? "")
         }
-        .alert("重命名收藏", isPresented: Binding(
-            get: { favoriteToRename != nil },
-            set: { if !$0 { favoriteToRename = nil } }
-        )) {
-            TextField("名称", text: $favoriteRenameText)
-            Button("取消", role: .cancel) { favoriteToRename = nil }
-            Button("保存") {
-                if let favoriteToRename {
-                    session.renameFavorite(favoriteToRename, to: favoriteRenameText)
-                }
-                favoriteToRename = nil
+        .locusRenameAlert(
+            isPresented: Binding(
+                get: { favoriteToRename != nil },
+                set: { if !$0 { favoriteToRename = nil } }
+            ),
+            title: "重命名收藏",
+            message: "输入一个方便识别的地点名称。",
+            text: $favoriteRenameText
+        ) {
+            if let favoriteToRename {
+                session.renameFavorite(favoriteToRename, to: favoriteRenameText)
             }
-            .disabled(favoriteRenameText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
-        } message: {
-            Text("输入一个方便识别的地点名称。")
+            favoriteToRename = nil
         }
         .onChange(of: favoriteRenameSuggestion?.id) { favoriteID in
             favoriteRenameTask?.cancel()
             guard let favoriteID else { return }
             favoriteRenameTask = Task {
-                try? await Task.sleep(for: .seconds(5))
+                try? await Task.sleep(nanoseconds: 5_000_000_000)
                 guard !Task.isCancelled,
                       favoriteRenameSuggestion?.id == favoriteID else { return }
                 withAnimation(.easeInOut(duration: 0.2)) {
@@ -609,6 +607,7 @@ struct StatusBarView: View {
     }
 
     private func syncLiveActivity() {
+        guard #available(iOS 16.2, *) else { return }
         let isActive = session.isSpoofing
         let status = title
         let coordinate = session.simulated

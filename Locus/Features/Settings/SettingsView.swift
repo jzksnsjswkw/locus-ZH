@@ -12,8 +12,6 @@ struct SettingsView: View {
     @State private var pendingBackup: LocusBackup?
     @State private var backupNotice: String?
     @State private var confirmClearSearchHistory = false
-    /// Jitter radius in centimeters for the UI; the session stores meters.
-    @State private var jitterCm: Double = 300
 
     private var appVersion: String {
         let short = Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String ?? "—"
@@ -22,7 +20,7 @@ struct SettingsView: View {
     }
 
     var body: some View {
-        NavigationStack {
+        LocusNavStack {
             List {
                 mapInteractionSection
                     .locusSheetRows()
@@ -56,12 +54,12 @@ struct SettingsView: View {
                     .locusSheetRows()
 
                 Section("关于") {
-                    LabeledContent("版本", value: appVersion)
-                    LabeledContent("定位引擎", value: "CLSimulationManager（TrollStore）")
+                    LocusLabeledRow("版本", value: appVersion)
+                    LocusLabeledRow("定位引擎", value: "CLSimulationManager（TrollStore）")
                     Link(destination: URL(string: "https://github.com/jzksnsjswkw/locus-ZH")!) {
-                        LabeledContent("项目主页", value: "jzksnsjswkw/locus-ZH")
+                        LocusLabeledRow("项目主页", value: "jzksnsjswkw/locus-ZH")
                     }
-                    LabeledContent("原始项目", value: "ChrisMack32/Locus")
+                    LocusLabeledRow("原始项目", value: "ChrisMack32/Locus")
                     Text("Locus 是采用 MIT 许可证的免费开源软件。定位注入使用 Apple 私有 CoreLocation 模拟 API（com.apple.locationd.simulation 权限）。")
                         .font(.footnote)
                         .foregroundStyle(.secondary)
@@ -84,7 +82,7 @@ struct SettingsView: View {
                     .listRowSeparator(.hidden)
                 }
             }
-            .scrollContentBackground(.hidden)
+            .locusScrollContentBackgroundHidden()
             .background(Color.clear)
             .navigationTitle("设置")
             .toolbar {
@@ -159,7 +157,7 @@ struct SettingsView: View {
         Section {
             Picker("定位点选择方式", selection: $session.targetSelectionMode) {
                 ForEach(TargetSelectionMode.allCases) { mode in
-                    Label(mode.title, systemImage: mode.icon).tag(mode)
+                    Label(mode.title, systemImage: SFSymbolCompat.resolved(mode.icon)).tag(mode)
                 }
             }
 
@@ -180,20 +178,38 @@ struct SettingsView: View {
 
             Toggle("模拟位置随机抖动", isOn: $session.locationJitterEnabled)
             if session.locationJitterEnabled {
-                Stepper(value: $jitterCm, in: 10...2000, step: 10) {
-                    LabeledContent("抖动半径") {
-                        Text("\(Int(jitterCm)) 厘米")
+                Stepper(value: $session.locationJitterRadius, in: 0.1...20, step: 0.1) {
+                    LocusLabeledRow("抖动半径") {
+                        Text(String(format: "%.1f 米", session.locationJitterRadius))
                             .monospacedDigit()
                             .foregroundStyle(.secondary)
                     }
                 }
-                .onAppear { jitterCm = session.locationJitterRadius * 100 }
-                .onChange(of: jitterCm) { session.locationJitterRadius = $0 / 100 }
+            }
+
+            Stepper(value: $session.locationUpdateInterval, in: 0.1...10, step: 0.1) {
+                LocusLabeledRow("定位更新间隔") {
+                    Text(String(format: "%.1f 秒", session.locationUpdateInterval))
+                        .monospacedDigit()
+                        .foregroundStyle(.secondary)
+                }
+            }
+            .onChange(of: session.locationUpdateInterval) { newValue in
+                if session.locationUpdateJitter > newValue {
+                    session.locationUpdateJitter = newValue
+                }
+            }
+            Stepper(value: $session.locationUpdateJitter, in: 0...max(0.1, session.locationUpdateInterval), step: 0.1) {
+                LocusLabeledRow("更新间隔随机抖动") {
+                    Text(String(format: "±%.1f 秒", session.locationUpdateJitter))
+                        .monospacedDigit()
+                        .foregroundStyle(.secondary)
+                }
             }
         } header: {
             Text("地图与交互")
         } footer: {
-            Text("位置抖动让轨迹更接近真实 GPS 行为；半径越大抖动越明显。")
+            Text("位置抖动让轨迹更接近真实 GPS 行为；半径越大抖动越明显。更新间隔决定移动时推送模拟坐标的频率，不影响行进速度；抖动幅度会在每次更新时随机微调该间隔，且不会超过更新间隔。")
         }
     }
 
@@ -233,7 +249,7 @@ struct PlacesView: View {
     @State private var renameText = ""
 
     var body: some View {
-        NavigationStack {
+        LocusNavStack {
             List {
                 if session.favorites.isEmpty {
                     Section("收藏地点") {
@@ -267,7 +283,7 @@ struct PlacesView: View {
                 }
 
             }
-            .scrollContentBackground(.hidden)
+            .locusScrollContentBackgroundHidden()
             .background(Color.clear)
             .navigationTitle("收藏夹")
             .task {
@@ -278,23 +294,19 @@ struct PlacesView: View {
                     Button("完成") { dismiss() }
                 }
             }
-            .alert("重命名收藏", isPresented: Binding(
-                get: { placeToRename != nil },
-                set: { if !$0 { placeToRename = nil } }
-            )) {
-                TextField("名称", text: $renameText)
-                Button("取消", role: .cancel) {
-                    placeToRename = nil
+            .locusRenameAlert(
+                isPresented: Binding(
+                    get: { placeToRename != nil },
+                    set: { if !$0 { placeToRename = nil } }
+                ),
+                title: "重命名收藏",
+                message: "设置一个方便以后识别的名称。",
+                text: $renameText
+            ) {
+                if let place = placeToRename {
+                    session.renameFavorite(place, to: renameText)
                 }
-                Button("保存") {
-                    if let place = placeToRename {
-                        session.renameFavorite(place, to: renameText)
-                    }
-                    placeToRename = nil
-                }
-                .disabled(renameText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
-            } message: {
-                Text("设置一个方便以后识别的名称。")
+                placeToRename = nil
             }
         }
     }

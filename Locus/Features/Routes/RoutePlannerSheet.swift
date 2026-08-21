@@ -12,7 +12,7 @@ struct RoutePlannerSheet: View {
     @Environment(\.dismiss) private var dismiss
 
     var body: some View {
-        NavigationStack {
+        LocusNavStack {
             List {
                 Section("速度与循环") {
                     TravelModeSelector()
@@ -80,7 +80,7 @@ struct RoutePlannerSheet: View {
                 }
                 .locusSheetRows()
             }
-            .scrollContentBackground(.hidden)
+            .locusScrollContentBackgroundHidden()
             .background(Color.clear)
             .navigationTitle("轨迹")
             .toolbar {

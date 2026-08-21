@@ -14,7 +14,7 @@ struct TravelModeSelector: View {
                     UISelectionFeedbackGenerator().selectionChanged()
                 } label: {
                     VStack(spacing: 2) {
-                        Image(systemName: mode.icon)
+                        Image(systemName: SFSymbolCompat.resolved(mode.icon))
                             .font(.subheadline.weight(.semibold))
                         Text(mode.title)
                             .font(.caption2.weight(.semibold))

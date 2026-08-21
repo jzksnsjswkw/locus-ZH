@@ -33,7 +33,7 @@ final class MapDataSourceDetector: ObservableObject {
         scheduledDetection = Task { [weak self] in
             for delay in [0.35, 1.0, 2.0] {
                 do {
-                    try await Task.sleep(for: .seconds(delay))
+                    try await Task.sleep(nanoseconds: UInt64(delay * 1_000_000_000))
                 } catch {
                     return
                 }

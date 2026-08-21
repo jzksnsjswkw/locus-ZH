@@ -5,6 +5,10 @@ struct LocusApp: App {
     @StateObject private var session = SpoofSession()
     @AppStorage(SetupGate.defaultsKey) private var setupComplete = false
 
+    init() {
+        LegacyCompatibility.applyListAppearance()
+    }
+
     /// Map when setup is finished.
     private var showMap: Bool {
         setupComplete

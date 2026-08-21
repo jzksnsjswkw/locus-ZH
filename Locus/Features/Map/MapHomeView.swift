@@ -86,6 +86,16 @@ struct MapHomeView: View {
         ZStack(alignment: .top) {
             mapLayer
 
+            // Markers live in the OUTER surface ZStack, not inside mapLayer:
+            // sibling layers directly adjacent to MKMapView lose taps to
+            // VectorKit's touch handling on real devices (simulator is
+            // unaffected). Same full-bleed coordinate space as mapLayer.
+            simulatedMarkerOverlay
+            favoriteMarkersOverlay
+            pinOverlay
+            waypointMarkersOverlay
+            routeEndpointMarkersOverlay
+
             if session.targetSelectionMode == .crosshair, !drawMode, !searchPresented {
                 crosshairTarget
                     .zIndex(2)
@@ -205,12 +215,6 @@ struct MapHomeView: View {
             // intrinsic size, and in a ZStack it can collapse to zero frame
             // on iOS 16 (sizeThatFits behavior), leaving a black screen.
             .frame(maxWidth: .infinity, maxHeight: .infinity)
-
-            simulatedMarkerOverlay
-            favoriteMarkersOverlay
-            pinOverlay
-            waypointMarkersOverlay
-            routeEndpointMarkersOverlay
 
             MapDataSourceProbe(detector: mapDataSourceDetector)
                 .frame(width: 1, height: 1)
@@ -368,7 +372,7 @@ struct MapHomeView: View {
                     }
                 }
             )
-            .presentationDetents([.medium, .large])
+            .locusMediumLargeDetents()
         }
         .alert("清空搜索历史", isPresented: $confirmClearSearchHistory) {
             Button("清空", role: .destructive) { session.clearSearchHistory() }
@@ -779,7 +783,7 @@ struct MapHomeView: View {
                 }
             }
         }
-        .scrollIndicators(.hidden)
+        .locusScrollIndicatorsHidden()
         .locusGlass(.regular, in: RoundedRectangle(cornerRadius: 22, style: .continuous))
         .contentShape(RoundedRectangle(cornerRadius: 22, style: .continuous))
         .frame(maxHeight: 300)
@@ -850,7 +854,7 @@ struct MapHomeView: View {
                 }
             }
         }
-        .scrollIndicators(.hidden)
+        .locusScrollIndicatorsHidden()
         .locusGlass(.regular, in: RoundedRectangle(cornerRadius: 22, style: .continuous))
         .contentShape(RoundedRectangle(cornerRadius: 22, style: .continuous))
         .frame(maxHeight: 300)
@@ -965,7 +969,7 @@ struct MapHomeView: View {
                 .overlay(Color.white.opacity(0.22))
                 .frame(width: 32)
 
-            rightRailIconButton("square.3.layers.3d") {
+            rightRailIconButton(SFSymbolCompat.resolved("square.3.layers.3d")) {
                 dismissStatusDetails()
                 session.mapStyleIndex = (session.mapStyleIndex + 1) % 2
             }
@@ -1258,7 +1262,7 @@ struct MapHomeView: View {
             favoriteToast = message
         }
         favoriteToastTask = Task {
-            try? await Task.sleep(for: .seconds(1.8))
+            try? await Task.sleep(nanoseconds: 1_800_000_000)
             guard !Task.isCancelled else { return }
             withAnimation(.easeIn(duration: 0.18)) {
                 favoriteToast = nil
@@ -1562,20 +1566,21 @@ private struct FavoriteMapMarker: View {
             .simultaneousGesture(favoritePressGesture)
 
             if selected {
-                Button(action: onRemove) {
-                    Label("删除收藏", systemImage: "trash.fill")
-                        .font(.caption.weight(.semibold))
-                        .foregroundStyle(LocusTheme.danger)
-                        .padding(.horizontal, 18)
-                        .frame(height: 50)
-                        .contentShape(Rectangle())
-                }
-                .buttonStyle(.plain)
-                .locusGlass(.regular, in: Capsule())
-                .contentShape(Capsule())
-                .fixedSize()
-                .offset(y: -46)
-                .transition(.scale(scale: 0.9, anchor: .bottom).combined(with: .opacity))
+                Label("删除收藏", systemImage: "trash.fill")
+                    .font(.subheadline.weight(.semibold))
+                    .foregroundStyle(LocusTheme.danger)
+                    .lineLimit(1)
+                    .frame(width: 150, height: 44)
+                    .contentShape(Rectangle())
+                    .onTapGesture {
+                        UIImpactFeedbackGenerator(style: .light).impactOccurred()
+                        onRemove()
+                    }
+                    .accessibilityLabel("删除收藏")
+                    .accessibilityAddTraits(.isButton)
+                    .locusGlass(.regular, in: Capsule())
+                    .offset(y: -46)
+                    .transition(.scale(scale: 0.9, anchor: .bottom).combined(with: .opacity))
             }
         }
         // The delete button remains inside this frame, so the map cannot receive
@@ -1599,7 +1604,7 @@ private struct FavoriteMapMarker: View {
                     UIImpactFeedbackGenerator(style: .soft).impactOccurred()
                     longPressTask?.cancel()
                     longPressTask = Task { @MainActor in
-                        try? await Task.sleep(for: .seconds(0.5))
+                        try? await Task.sleep(nanoseconds: 500_000_000)
                         guard !Task.isCancelled, pressStarted, !longPressActivated else { return }
                         longPressActivated = true
                         UIImpactFeedbackGenerator(style: .medium).impactOccurred()
@@ -1764,6 +1769,10 @@ struct LocusMapView: UIViewRepresentable {
 
     func updateUIView(_ mapView: MKMapView, context: Context) {
         context.coordinator.parent = self
+
+        // VectorKit adds internal recognizers lazily after first interaction;
+        // re-apply so late arrivals also stop cancelling overlay button touches.
+        Self.disableTouchCancellation(in: mapView)
 
         // Only touch the map type when the requested one changed; re-assigning
         // it on every update churns MapKit's VectorKit renderer and can blank
